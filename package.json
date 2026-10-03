@@ -1,0 +1,17 @@
+{
+  "name": "hr-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HR Chat Agent: LangGraph.js agent (server/) + React UI (client/)",
+  "scripts": {
+    "setup": "npm install && npm --prefix server install && npm --prefix client install && npm --prefix server run db:seed",
+    "dev": "concurrently --names api,web --prefix-colors blue,green --kill-others-on-fail \"npm --prefix server start\" \"npm --prefix client run dev\"",
+    "dev:watch": "concurrently --names api,web --prefix-colors blue,green --kill-others-on-fail \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "test": "npm --prefix server test",
+    "typecheck": "npm --prefix server run typecheck && npm --prefix client run typecheck",
+    "db:reset": "npm --prefix server run db:reset"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}

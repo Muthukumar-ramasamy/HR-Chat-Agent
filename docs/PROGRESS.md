@@ -16,12 +16,12 @@ work without missing context. Update it at the end of every stage.
 | 4 | `search_policy` RAG over policy docs (local BM25 keyword search) | ✅ Done — user-tested, all 5 cases (incl. policy + data milestone) |
 | 5 | Express API + JWT login, employee_id from token into state | ✅ Done — user-tested via PowerShell |
 | 6 | Conversation memory (checkpointer) + `apply_leave` interrupt | ✅ Done — user-tested (approve, duplicate blocked, cancel) |
-| 7 | React + MUI chat UI | Not started |
+| 7 | React + MUI chat UI (+ root `npm run dev` for API + UI) | ✅ Done — user-tested in browser |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | Tracing wired in Stage 1 (env-only); rest not started |
 
-**Next action:** Stage 7 — React + MUI chat UI (login, chat with threadId, confirmation dialog for apply_leave). Note: demo DB has test request #9 — run `npm run db:reset` before recording.
+**Next action:** Stage 8 — README (setup, architecture Mermaid diagram, design decisions, future enhancements), push to a public GitHub repo, record demo (`npm run db:reset` first), submit by Sunday night.
 
-**Commits:** `6d4384a` Stage 1 · `816929d` Stage 2 · `a0af586` Stage 3 · `85dbcf8` Stage 4 · `5f9d4c6` Stage 5.
+**Commits:** `6d4384a` Stage 1 · `816929d` Stage 2 · `a0af586` Stage 3 · `85dbcf8` Stage 4 · `5f9d4c6` Stage 5 · `83bffa1` Stage 6.
 
 ---
 
@@ -42,10 +42,20 @@ work without missing context. Update it at the end of every stage.
 
 ```
 HR bot/
+├── package.json           # root scripts: setup, dev (API + UI together via concurrently), test, typecheck
 ├── CLAUDE.md              # project brief (goals, stack, rules, plan)
 ├── .gitignore             # ignores node_modules, .env*, *.db (keeps .env.example)
 ├── docs/
 │   └── PROGRESS.md        # this file
+├── client/                # React + MUI chat UI (Vite)
+│   ├── vite.config.ts     # dev server :5173, proxies /api -> :3001
+│   └── src/
+│       ├── main.tsx       # MUI theme (light/dark from OS), CssBaseline
+│       ├── App.tsx        # session {token, employee} in memory -> LoginPage | ChatPage
+│       ├── api.ts         # login / sendMessage / confirmLeave, ApiError, response types
+│       ├── LoginPage.tsx  # email/password + demo-account chips
+│       ├── ChatPage.tsx   # chat, suggestions, tool/token caption, confirmation flow
+│       └── ConfirmLeaveCard.tsx  # Submit / Cancel card for apply_leave
 └── server/                # Node/TypeScript backend + agent
     ├── package.json       # "type": "module"; scripts below
     ├── tsconfig.json      # strict, noEmit, moduleResolution "bundler" (extensionless imports)
@@ -90,7 +100,20 @@ HR bot/
             └── seed.ts    # synthetic demo data
 ```
 
-## Scripts (run inside `server/`)
+## Scripts
+
+From the **project root**:
+
+| Command | What it does |
+|---|---|
+| `npm run setup` | Install root + server + client dependencies and seed the database (first time) |
+| `npm run dev` | **Start API (:3001) and UI (:5173) together** — `[api]` blue / `[web]` green output; API without file watching, so chat memory survives |
+| `npm run dev:watch` | Same, but the API restarts on file changes (clears chat memory) |
+| `npm test` | Server test suite |
+| `npm run typecheck` | Typecheck server and client |
+| `npm run db:reset` | Reseed the synthetic demo data |
+
+Inside `server/`:
 
 | Command | What it does |
 |---|---|
@@ -699,6 +722,53 @@ To undo test requests afterwards: `npm run db:reset` (reseeds the synthetic demo
 
 ---
 
+## Stage 7 — React + MUI chat UI
+
+### What was built ([client/](../client/))
+
+- **Stack**: React 19, MUI 9 (+ Emotion, icons), Vite 8, TypeScript 7, `react-markdown` + `remark-gfm` (bot replies
+  use bold and tables). Set up by hand (no create-vite wizard). Scripts: `npm run dev` (:5173), `build`, `typecheck`.
+- **Dev proxy**: Vite forwards `/api` to `http://localhost:3001`, so the browser uses one origin (CORS config on the
+  server stays as a fallback).
+- **Session**: `{token, employee}` kept in React state only (no localStorage) → refresh = log in again; any 401 from
+  the API logs the user out (expired token).
+- **LoginPage**: email/password form; chips for the 4 synthetic demo accounts fill in email + `Password@123`.
+- **ChatPage**:
+  - AppBar with name · grade · location, "New conversation" (clears messages + threadId), "Log out".
+  - Empty state with 4 suggestion chips following the demo script (balance, Dec 22–Jan 2, carry forward, apply EL).
+  - User bubbles right (primary colour), bot bubbles left rendered as Markdown (tables styled).
+  - Under each bot reply, a caption: "Tools: calculate_leave, search_policy · 2 model calls · 3.8k tokens" — makes
+    the agentic reasoning and token cost visible in the demo.
+  - threadId from the first response is sent with every later message (server-side memory).
+  - When a response has `confirmation`, a **ConfirmLeaveCard** shows type, dates (e.g. "Tue, 22 Dec 2026"), working
+    days, balance before → after, reason; **Submit / Cancel** call `/api/chat/confirm`. The input box is disabled
+    (placeholder explains why) until the user decides — matches the server's 409 rule.
+  - Enter sends, Shift+Enter = new line, max 1000 chars, "Thinking…" spinner, errors shown as an Alert.
+- MUI 9 note: system props like `fontWeight` on Typography were removed → use `sx`.
+- Bug found in user testing: `useEffect(() => ref.current?.scrollIntoView(...))` returned scrollIntoView's value (a
+  Promise in newer browsers) → React "destroy is not a function" crash after the first message. Fixed with a block
+  body. Added an inline SVG favicon (stops the favicon 404).
+
+### Verified (no LLM)
+
+- `npm run typecheck` (client) passes; `vite build` succeeds (single 646 kB JS chunk — fine for a demo).
+- Ran API + Vite together: page served (`<title>HR Assist</title>`), `POST /api/login` through the Vite proxy returns
+  token + Asha, `/api/chat` without token → 401.
+- User-tested in the browser with Claude: working (after the useEffect fix).
+
+### How to test
+
+1. From the project root: `npm run dev` (starts API + UI together) → open http://localhost:5173
+3. Click the "Asha · Chennai" chip → Sign in.
+4. Click "Can I take Dec 22 to Jan 2 off?" → answer + caption with tools/tokens. Follow up "what about sick leave instead?".
+5. "Apply for earned leave from Dec 22 to Jan 2" → confirmation card → Submit → submitted; input disabled while the
+   card is showing.
+6. "What is Dev Patel's leave balance?" → refusal. Log out → sign in as Priya → "Am I eligible for earned leave?".
+7. Narrow the browser to phone width: layout should still fit.
+Then `npm run db:reset` (server) to remove test requests.
+
+---
+
 ## Decisions log
 
 | # | Decision | Reason |
@@ -737,6 +807,10 @@ To undo test requests afterwards: `npm run db:reset` (reseeds the synthetic demo
 | D33 | New message while a confirmation is pending → 409 | Avoids a dangling tool call in history (Anthropic rejects tool_use without tool_result) |
 | D34 | Graph tests use a scripted fake model + temp SQLite DB | Full agent flow tested with zero Claude spend |
 | D35 | `useTempDb()` helper ([db/tempDb.ts](../server/src/db/tempDb.ts)): tests touching leave data get a fresh seeded temp DB | leaveRequest tests broke after a live test added request #9 to the demo DB; tests must not depend on demo data |
+| D36 | Token kept in memory only (no localStorage) | Simple and avoids token theft via injected scripts; refresh = re-login. Cookie-based session = future |
+| D37 | Vite dev proxy for `/api` | One origin in the browser; no CORS issues in dev |
+| D38 | Show tools + model calls + tokens under each reply | Makes agent reasoning and cost visible in the demo |
+| D39 | Root `package.json` with `concurrently` (not npm workspaces) | One command for API + UI without changing how server/ and client/ install their own node_modules |
 | D19 | Stage 4 retrieval = local keyword (BM25-style) search, no embeddings (user choice, 2026-10-03) | Anthropic has no embeddings API; keyword search needs no API calls/tokens/second provider and suits a small set of well-headed policy docs. Vector search = future enhancement. CLAUDE.md stack updated |
 
 ## Open items / reminders
