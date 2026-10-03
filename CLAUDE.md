@@ -21,9 +21,10 @@ tool integration, architecture, completeness.
 ## Stack
 - Language: TypeScript (Node.js) end to end
 - Agent framework: LangGraph.js (@langchain/langgraph)
-- LLM: Google Gemini Flash via free tier (@langchain/google-genai), key from Google AI Studio
-- Embeddings: Gemini embedding model
-- Vector store: LangChain in-memory vector store (rebuilt from policy docs at startup)
+- LLM: Claude Haiku 4.5 (@langchain/anthropic) — cheapest/lowest-token model; Gemini kept as a
+  config option (@langchain/google-genai)
+- Retrieval: local keyword (BM25-style) search over policy doc sections, built at startup —
+  no embeddings API, zero tokens (Anthropic has no embeddings; vector search = future enhancement)
 - Database: SQLite (better-sqlite3) with SYNTHETIC seed data only
 - Backend: Express API
 - Frontend: React + MUI (Vite), minimal chat UI

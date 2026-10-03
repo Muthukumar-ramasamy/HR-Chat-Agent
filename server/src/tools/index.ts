@@ -5,9 +5,9 @@
 // TOKENS: descriptions/schemas are sent with every model call, and results come back as
 // input tokens, so both are kept short. Results never echo the inputs.
 //
-// SECURITY: no tool accepts an employee ID. The ID comes from the run config
-// (config.configurable.employee_id), which the server sets from the verified login.
-import { tool, type ToolRunnableConfig } from "@langchain/core/tools";
+// SECURITY: no tool accepts an employee ID. The ID comes from graph state
+// (runtime.state.employeeId), which only our code sets — from the verified login.
+import { tool, type ToolRuntime } from "@langchain/core/tools";
 import { z } from "zod";
 import { today } from "../hr/dates";
 import {
@@ -20,12 +20,15 @@ import {
   tenureMonths,
 } from "../hr/leaveMath";
 import * as repo from "../hr/repo";
+import type { AgentStateType } from "../agent/state";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
 const leaveType = z.enum(["CL", "SL", "EL"]); // meanings are in the system prompt
 
-function currentEmployee(config: ToolRunnableConfig): repo.Employee {
-  const id = config?.configurable?.employee_id;
+type Runtime = ToolRuntime<AgentStateType>;
+
+function currentEmployee(runtime: Runtime): repo.Employee {
+  const id = runtime?.state?.employeeId;
   if (typeof id !== "string" || !id) throw new Error("No authenticated employee in this session.");
   const employee = repo.getEmployee(id);
   if (!employee) throw new Error("Authenticated employee not found.");
@@ -36,8 +39,8 @@ const currentYear = () => Number(today().slice(0, 4));
 const json = (value: unknown) => JSON.stringify(value);
 
 export const getEmployeeProfile = tool(
-  async (_input, config) => {
-    const e = currentEmployee(config);
+  async (_input, runtime: Runtime) => {
+    const e = currentEmployee(runtime);
     const months = tenureMonths(e.joining_date, today());
     return json({
       name: e.name,
@@ -57,8 +60,8 @@ export const getEmployeeProfile = tool(
 );
 
 export const getLeaveBalance = tool(
-  async ({ leave_type }, config) => {
-    const e = currentEmployee(config);
+  async ({ leave_type }, runtime: Runtime) => {
+    const e = currentEmployee(runtime);
     const year = currentYear();
     const balances = repo.getLeaveBalances(e.id, year, leave_type);
     if (balances.length === 0) return json({ year, message: "No leave allocation found for this year." });
@@ -81,8 +84,8 @@ export const getLeaveBalance = tool(
 );
 
 export const getLeaveHistory = tool(
-  async ({ from_date, to_date }, config) => {
-    const e = currentEmployee(config);
+  async ({ from_date, to_date }, runtime: Runtime) => {
+    const e = currentEmployee(runtime);
     const year = currentYear();
     const from = from_date ?? `${year}-01-01`;
     const to = to_date ?? `${year}-12-31`;
@@ -104,8 +107,8 @@ export const getLeaveHistory = tool(
 );
 
 export const getHolidays = tool(
-  async ({ year, location }, config) => {
-    const e = currentEmployee(config);
+  async ({ year, location }, runtime: Runtime) => {
+    const e = currentEmployee(runtime);
     const loc = location ?? e.location;
     const known = repo.listLocations();
     if (!known.includes(loc)) return json({ error: `Unknown location "${loc}". Known: ${known.join(", ")}` });
@@ -120,8 +123,8 @@ export const getHolidays = tool(
 );
 
 export const calculateLeave = tool(
-  async ({ calculation, leave_type, start_date, end_date }, config) => {
-    const e = currentEmployee(config);
+  async ({ calculation, leave_type, start_date, end_date }, runtime: Runtime) => {
+    const e = currentEmployee(runtime);
     const year = currentYear();
 
     switch (calculation) {
@@ -190,8 +193,8 @@ export const calculateLeave = tool(
 );
 
 export const checkEligibility = tool(
-  async ({ leave_type }, config) => {
-    const e = currentEmployee(config);
+  async ({ leave_type }, runtime: Runtime) => {
+    const e = currentEmployee(runtime);
     const lt = repo.getLeaveType(leave_type)!;
     const months = tenureMonths(e.joining_date, today());
     const available = repo.getLeaveBalances(e.id, currentYear(), leave_type)[0]?.available ?? 0;

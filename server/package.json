@@ -8,6 +8,7 @@
     "db:seed": "tsx src/db/seed.ts",
     "db:reset": "tsx src/db/seed.ts --reset",
     "chat": "tsx src/cli.ts",
+    "graph": "tsx src/cli.ts --graph",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\""
   },

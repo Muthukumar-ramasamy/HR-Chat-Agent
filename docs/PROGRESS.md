@@ -12,17 +12,16 @@ work without missing context. Update it at the end of every stage.
 |---|---|---|
 | 1 | Project setup, SQLite schema + synthetic seed, bare Gemini CLI chat | ✅ Done — user-tested (chat, memory, LangSmith traces) |
 | 2 | HR tools + tool calling (+ switch to Claude Haiku 4.5, token diet) | ✅ Done — user-tested |
-| 3 | LangGraph agent wiring all tools | Not started |
+| 3 | LangGraph agent wiring all tools | ✅ Done — user-tested (Dec 22–Jan 2, refusal); follow-up + Priya EL not re-run |
 | 4 | `search_policy` RAG over policy docs | Not started |
 | 5 | Login + JWT, employee_id injected into state | Not started |
 | 6 | Conversation memory (checkpointer) + `apply_leave` interrupt | Not started |
 | 7 | React + MUI chat UI | Not started |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | Tracing wired in Stage 1 (env-only); rest not started |
 
-**Next action:** user sets `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, clears `LLM_MODEL` in `server/.env`, then tests Stage 2 (`npm run chat`, see "Stage 2 → How to test") →
-commit Stage 2 → start Stage 3 (LangGraph agent replaces the hand-written loop in `cli.ts`).
+**Next action:** Stage 4 — synthetic policy docs + local keyword search + `search_policy` tool with doc/section citations.
 
-**Commits:** `6d4384a` Stage 1.
+**Commits:** `6d4384a` Stage 1 · `816929d` Stage 2.
 
 ---
 
@@ -55,7 +54,9 @@ HR bot/
         ├── llm.test.ts    # retry handler tests (simulated Gemini errors)
         ├── cli.ts         # chat loop; Stage 2 = hand-written tool-calling loop
         ├── agent/
-        │   └── prompt.ts  # buildSystemPrompt() — today's date + rules
+        │   ├── prompt.ts  # buildSystemPrompt() — today's date + rules
+        │   ├── state.ts   # AgentState: messages + employeeId (Annotation)
+        │   └── graph.ts   # buildAgentGraph(): agent -> tools -> agent ... -> trim -> END
         ├── tools/
         │   └── index.ts   # the 6 HR tools (hrTools array)
         ├── hr/
@@ -76,6 +77,7 @@ HR bot/
 | `npm run db:seed` | Creates `data/hr.db` and seeds it — only if empty (safe to re-run) |
 | `npm run db:reset` | Clears the demo tables and reseeds |
 | `npm run chat` | CLI chat as E1001 (Asha). `npm run chat -- --as E1003` to be another seeded employee |
+| `npm run graph` | Print the agent graph as a Mermaid diagram (for README) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Unit tests (`node:test` via tsx): leave math + retry handler. No API calls |
 
@@ -372,6 +374,75 @@ tool-use overhead).
 Future levers: Stage 4 RAG — small top-k (2–3) and short chunks; Stage 6 — the checkpointer stores full
 history, so add the same trimming as a graph step; consider fewer tools (merge profile into eligibility) if needed.
 
+## Stage 3 — LangGraph agent
+
+### What was built
+
+**State ([server/src/agent/state.ts](../server/src/agent/state.ts))**: `AgentState = Annotation.Root({ ...MessagesAnnotation.spec, employeeId })`.
+`messages` uses LangGraph's reducer (appends; `RemoveMessage` deletes by id). `employeeId` is set only by
+our code at invoke time — no node lets the model write it. (Tried a Zod state with `MessagesZodState` first:
+`messages` typed as `unknown` under Zod v4 → switched to Annotation.)
+
+**Graph ([server/src/agent/graph.ts](../server/src/agent/graph.ts))**:
+
+```mermaid
+graph TD;
+  __start__ --> agent;
+  agent -.->|tool_calls| tools;
+  tools --> agent;
+  agent -.->|final answer| trim;
+  trim --> __end__;
+```
+
+- `agent` node: `modelWithTools.invoke([SystemMessage(buildSystemPrompt()), ...state.messages])`. The system prompt
+  is prepended per call, **not stored in state** → not saved in history (Stage 6 checkpointer) and always has today's date.
+- `tools` node: prebuilt `ToolNode(hrTools)`. Runs all tool calls of the last AIMessage; passes
+  `runtime.state` to tools; turns thrown errors into `ToolMessage(status: "error")` ("…Please fix your mistakes.").
+- `routeAfterAgent`: last message has `tool_calls` → `tools`, else → `trim`.
+- `trim` node: emits `RemoveMessage` for every ToolMessage and tool-calling AIMessage in state → history keeps
+  only questions + final answers (same token rule as Stage 2, now inside the graph so the checkpointer will store
+  trimmed history too).
+- `recursionLimit: 20` per invoke (each agent/tools hop is a step) replaces Stage 2's `MAX_TOOL_ROUNDS`.
+
+**Tools** now read identity from graph state: `tool(async (input, runtime: ToolRuntime<AgentStateType>) => …)`,
+`currentEmployee(runtime)` → `runtime.state.employeeId`. Empty/missing → "No authenticated employee in this session."
+
+**CLI ([server/src/cli.ts](../server/src/cli.ts))**: the hand-written loop is gone. Each turn calls
+`graph.stream({ messages: [...history, HumanMessage], employeeId }, { streamMode: ["updates", "values"] })`:
+"updates" chunks drive live logging (`-> tool(args)`, `<- result`, token sum from agent messages); the last
+"values" chunk becomes the new `history`. On error, history is unchanged (turn dropped). `--graph` prints Mermaid.
+
+### Concepts introduced
+
+- **StateGraph**: an agent = state + nodes (functions that return state updates) + edges. Conditional edges are
+  how the agent "decides" (here: tools vs. done). Same loop as Stage 2, but declarative, traceable per node in
+  LangSmith, and ready for checkpointers (Stage 6) and interrupts (`apply_leave`).
+- **Reducers**: `messages` updates are merged (append / remove by id) instead of replaced.
+- **Runtime injection**: tools get `runtime.state` from ToolNode → identity flows through state, not the prompt.
+- **Streaming modes**: `updates` (per-node deltas) vs `values` (full state snapshots).
+
+### Verified (no LLM)
+
+- `npm run typecheck` passes; `npm test` 10/10.
+- `npm run graph` prints the expected Mermaid graph.
+- `ToolNode` invoked directly with state `employeeId: "E1003"` → check_eligibility result + bad-date error as
+  ToolMessage; with `employeeId: ""` → both tools return "No authenticated employee in this session."
+- Live (user): Dev Patel refusal → 1 model call, no tools, 1549 in / 53 out.
+- Live (user): "Can I take Dec 22 to Jan 2 off?" → model asked "do you mean 2026–2027?" (wasted turn; terse prompt
+  lost the date cue). Fix: prompt rule "No year = next upcoming occurrence (a range may cross into next year); don't
+  ask to confirm, state the dates". Re-test: answered directly (Dec 22 2026–Jan 2 2027, 7 working days), 2 model
+  calls, 3556 in / 241 out.
+- Not re-run in Stage 3 (user chose to commit): sick-leave follow-up (checks trim node keeps enough context) and
+  Priya EL eligibility. Re-check these during Stage 4 testing.
+
+### How to test
+
+`npm run chat` → same questions as Stage 2 (Dec 22 – Jan 2; sick-leave follow-up; Dev Patel refusal) and
+`npm run chat -- --as E1003` → EL eligibility. Expect identical behaviour and similar token counts; LangSmith
+traces now show nodes `agent` / `tools` / `trim`.
+
+---
+
 ## Decisions log
 
 | # | Decision | Reason |
@@ -394,7 +465,10 @@ history, so add the same trimming as a graph step; consider fewer tools (merge p
 | D16 | Multi-year leave ranges checked against current-year balance (with a note) | Next year's allocation doesn't exist yet; keep it simple |
 | D17 | Unit tests with built-in `node:test` via `tsx --test` | No extra test framework needed |
 | D18 | Default LLM = Claude Haiku 4.5 (`claude-haiku-4-5`), Gemini kept as option | User has a Claude key and asked for the lowest-token model; Haiku 4.5 is the cheapest Claude ($1/$5 per M tokens) |
-| D19 | Stage 4 embeddings still need a decision | Anthropic has no embeddings API. Options: keep Gemini embeddings (`GOOGLE_API_KEY`), or a local/keyword retriever |
+| D20 | Graph state via `Annotation` (not Zod) | `MessagesZodState` lost the messages type under Zod v4 |
+| D21 | System prompt prepended per model call, not stored in state | Keeps saved history small; date always current |
+| D22 | History trimming moved into a `trim` graph node (RemoveMessage) | Works the same once a checkpointer stores state (Stage 6) |
+| D19 | Stage 4 retrieval = local keyword (BM25-style) search, no embeddings (user choice, 2026-10-03) | Anthropic has no embeddings API; keyword search needs no API calls/tokens/second provider and suits a small set of well-headed policy docs. Vector search = future enhancement. CLAUDE.md stack updated |
 
 ## Open items / reminders
 
