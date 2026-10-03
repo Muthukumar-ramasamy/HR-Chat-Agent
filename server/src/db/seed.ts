@@ -1,6 +1,7 @@
 // Seeds SYNTHETIC demo data. Every name, email and record below is fictional.
 //   npm run db:seed    -> seeds only if the database is empty
 //   npm run db:reset   -> clears the demo tables and reseeds
+import { pathToFileURL } from "node:url";
 import bcrypt from "bcryptjs";
 import { getDb } from "./index";
 
@@ -64,13 +65,14 @@ const holidays = [
   ["2027-12-25", "Christmas", "ALL"],
 ] as const;
 
-function seed() {
+// Exported so tests can seed a throwaway database (DB_PATH) without spawning a process.
+export function seed({ reset = false, quiet = false } = {}) {
+  const log = quiet ? () => {} : console.log;
   const db = getDb();
-  const reset = process.argv.includes("--reset");
 
   const count = (db.prepare("SELECT COUNT(*) AS n FROM employees").get() as { n: number }).n;
   if (count > 0 && !reset) {
-    console.log(`Database already seeded (${count} employees). Use "npm run db:reset" to reseed.`);
+    log(`Database already seeded (${count} employees). Use "npm run db:reset" to reseed.`);
     return;
   }
 
@@ -113,13 +115,13 @@ function seed() {
     for (const row of holidays) insertHoliday.run(...row);
   })();
 
-  console.log("Seeded synthetic data:");
+  log("Seeded synthetic data:");
   for (const table of ["employees", "leave_types", "leave_allocations", "leave_requests", "holidays"]) {
     const { n } = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
-    console.log(`  ${table.padEnd(18)} ${n}`);
+    log(`  ${table.padEnd(18)} ${n}`);
   }
-  console.log(`\nDemo logins (password for all: ${DEMO_PASSWORD}):`);
-  for (const [id, name, email, role] of employees) console.log(`  ${id}  ${email.padEnd(26)} ${name} (${role})`);
+  log(`\nDemo logins (password for all: ${DEMO_PASSWORD}):`);
+  for (const [id, name, email, role] of employees) log(`  ${id}  ${email.padEnd(26)} ${name} (${role})`);
 }
 
-seed();
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) seed({ reset: process.argv.includes("--reset") });

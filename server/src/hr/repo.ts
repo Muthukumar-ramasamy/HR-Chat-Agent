@@ -1,4 +1,4 @@
-// Read-only queries over the HR database.
+// Queries over the HR database. The only write is createLeaveRequest (after user confirmation).
 import { getDb } from "../db";
 import type { Holiday } from "./leaveMath";
 
@@ -120,4 +120,23 @@ export function listLocations(): string[] {
   return (getDb().prepare(`SELECT DISTINCT location FROM employees ORDER BY location`).all() as { location: string }[]).map(
     (r) => r.location,
   );
+}
+
+// Creates a request awaiting manager approval. Called only after the user confirms (apply_leave).
+export function createLeaveRequest(r: {
+  employeeId: string;
+  leaveType: LeaveCode;
+  startDate: string;
+  endDate: string;
+  days: number;
+  reason: string | null;
+  appliedOn: string;
+}): number {
+  const result = getDb()
+    .prepare(
+      `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, days, reason, status, applied_on)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+    )
+    .run(r.employeeId, r.leaveType, r.startDate, r.endDate, r.days, r.reason, r.appliedOn);
+  return Number(result.lastInsertRowid);
 }

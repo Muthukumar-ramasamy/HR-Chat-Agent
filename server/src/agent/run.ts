@@ -1,5 +1,10 @@
 // Runs one chat turn through the agent graph. Shared by the CLI and the HTTP API.
+//
+// Memory lives in the graph's checkpointer, keyed by thread_id; callers only pass the new
+// message (or the user's answer to a pending confirmation).
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
+import { Command } from "@langchain/langgraph";
+import type { LeaveConfirmation } from "../tools";
 import type { AgentGraph } from "./graph";
 
 export type TurnEvent =
@@ -7,33 +12,59 @@ export type TurnEvent =
   | { type: "tool_result"; name: string; content: string };
 
 export interface TurnResult {
-  reply: string;
-  messages: BaseMessage[]; // full (trimmed) history after this turn
+  reply: string; // empty while waiting for confirmation
+  confirmation?: LeaveConfirmation; // set when apply_leave paused the graph
   toolCalls: { name: string; args: Record<string, unknown> }[];
   usage: { modelCalls: number; inputTokens: number; outputTokens: number };
 }
 
-export interface TurnInput {
+export type TurnInput = {
   employeeId: string; // from the verified login, never from the message
-  history: BaseMessage[];
-  message: string;
+  threadId: string;
+} & ({ message: string } | { resume: { approved: boolean } });
+
+export interface TurnRunner {
+  run(input: TurnInput, onEvent?: (e: TurnEvent) => void): Promise<TurnResult>;
+  hasPendingConfirmation(employeeId: string, threadId: string): Promise<boolean>;
 }
 
-export type RunTurn = (input: TurnInput, onEvent?: (e: TurnEvent) => void) => Promise<TurnResult>;
+export class ConfirmationStateError extends Error {}
 
-export function createTurnRunner(graph: AgentGraph): RunTurn {
-  return async ({ employeeId, history, message }, onEvent) => {
+// Thread keys include the employee ID, so one user can never load or resume another
+// user's conversation, even with a guessed thread ID.
+const threadConfig = (employeeId: string, threadId: string) => ({
+  configurable: { thread_id: `${employeeId}:${threadId}` },
+});
+
+export function createTurnRunner(graph: AgentGraph): TurnRunner {
+  async function hasPendingConfirmation(employeeId: string, threadId: string) {
+    const snapshot = await graph.getState(threadConfig(employeeId, threadId));
+    return snapshot.tasks.some((t) => t.interrupts.length > 0);
+  }
+
+  async function run(input: TurnInput, onEvent?: (e: TurnEvent) => void): Promise<TurnResult> {
+    const { employeeId, threadId } = input;
+    const pending = await hasPendingConfirmation(employeeId, threadId);
+    if ("resume" in input && !pending) throw new ConfirmationStateError("There is no leave request waiting for confirmation.");
+    if ("message" in input && pending) throw new ConfirmationStateError("Please confirm or cancel the pending leave request first.");
+
     const toolCalls: TurnResult["toolCalls"] = [];
     const usage = { modelCalls: 0, inputTokens: 0, outputTokens: 0 };
-    let finalMessages: BaseMessage[] | undefined;
+    let confirmation: LeaveConfirmation | undefined;
+    let finalMessages: BaseMessage[] = [];
 
-    // "updates" = what each node just produced (tool calls, token usage); the trim node
-    // later removes tool traffic from state, so it has to be captured here.
-    // "values" = full state after each step; the last one is the new history.
-    const stream = await graph.stream(
-      { messages: [...history, new HumanMessage(message)], employeeId },
-      { streamMode: ["updates", "values"], recursionLimit: 20 },
-    );
+    const graphInput =
+      "message" in input
+        ? { messages: [new HumanMessage(input.message)], employeeId }
+        : (new Command({ resume: input.resume }) as Parameters<AgentGraph["stream"]>[0]);
+
+    // "updates" = what each node just produced (tool calls, token usage, interrupts);
+    // "values" = full state after each step; the last one holds the final answer.
+    const stream = await graph.stream(graphInput, {
+      ...threadConfig(employeeId, threadId),
+      streamMode: ["updates", "values"],
+      recursionLimit: 20,
+    });
 
     for await (const [mode, chunk] of stream) {
       if (mode === "values") {
@@ -41,6 +72,10 @@ export function createTurnRunner(graph: AgentGraph): RunTurn {
         continue;
       }
       for (const [node, update] of Object.entries(chunk)) {
+        if (node === "__interrupt__") {
+          confirmation = (update as { value: LeaveConfirmation }[])[0]?.value;
+          continue;
+        }
         const messages = ((update as { messages?: BaseMessage[] } | undefined)?.messages ?? []) as BaseMessage[];
         for (const m of messages) {
           if (node === "agent" && AIMessage.isInstance(m)) {
@@ -59,7 +94,9 @@ export function createTurnRunner(graph: AgentGraph): RunTurn {
       }
     }
 
-    if (!finalMessages) throw new Error("Graph produced no state.");
-    return { reply: finalMessages.at(-1)?.text ?? "", messages: finalMessages, toolCalls, usage };
-  };
+    if (confirmation) return { reply: "", confirmation, toolCalls, usage };
+    return { reply: finalMessages.at(-1)?.text ?? "", toolCalls, usage };
+  }
+
+  return { run, hasPendingConfirmation };
 }

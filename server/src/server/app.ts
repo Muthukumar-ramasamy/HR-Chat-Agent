@@ -1,19 +1,26 @@
 // HTTP API.
 //   POST /api/login  {email, password}  -> {token, employee}
 //   GET  /api/me     (Bearer token)      -> {employee}
-//   POST /api/chat   (Bearer token) {message} -> {reply, toolCalls, usage}
+//   POST /api/chat          (Bearer) {message, threadId?}  -> {threadId, reply, confirmation?, toolCalls, usage}
+//   POST /api/chat/confirm  (Bearer) {threadId, approved}  -> same shape (resumes a paused apply_leave)
 //
 // The agent runner is passed in, so tests can use a fake one (no LLM calls).
 import cors from "cors";
+import { randomUUID } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import type { RunTurn } from "../agent/run";
+import { ConfirmationStateError, type TurnInput, type TurnResult, type TurnRunner } from "../agent/run";
 import { login, signToken, verifyToken } from "../auth/auth";
 import { config } from "../config";
 import { getEmployee, type Employee } from "../hr/repo";
 
 const LoginBody = z.object({ email: z.string().trim().min(3).max(200), password: z.string().min(1).max(200) });
-const ChatBody = z.object({ message: z.string().trim().min(1).max(config.server.maxMessageChars) });
+const ThreadId = z.uuid();
+const ChatBody = z.object({
+  message: z.string().trim().min(1).max(config.server.maxMessageChars),
+  threadId: ThreadId.optional(), // omit to start a new conversation
+});
+const ConfirmBody = z.object({ threadId: ThreadId, approved: z.boolean() });
 
 // Only what the UI needs: no internal IDs of managers, no hashes.
 const publicEmployee = (e: Employee) => ({
@@ -39,7 +46,27 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-export function createApp(runTurn: RunTurn) {
+export function createApp(runner: TurnRunner) {
+  // Runs a turn and sends the response. 409 = confirmation state mismatch (e.g. new message
+  // while a leave request is waiting for confirmation).
+  async function respond(res: Response, input: TurnInput) {
+    let result: TurnResult;
+    try {
+      result = await runner.run(input);
+    } catch (err) {
+      if (err instanceof ConfirmationStateError) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+    console.log(
+      `[chat] ${input.employeeId} tools=${result.toolCalls.map((t) => t.name).join(",") || "-"} ` +
+        `tokens=${result.usage.inputTokens}/${result.usage.outputTokens}${result.confirmation ? " (awaiting confirmation)" : ""}`,
+    );
+    res.json({ threadId: input.threadId, ...result });
+  }
+
   const app = express();
   app.disable("x-powered-by");
   app.use(cors({ origin: config.server.corsOrigin }));
@@ -71,18 +98,22 @@ export function createApp(runTurn: RunTurn) {
   app.post("/api/chat", requireAuth, async (req, res) => {
     const body = ChatBody.safeParse(req.body);
     if (!body.success) {
-      res.status(400).json({ error: `Message must be 1-${config.server.maxMessageChars} characters.` });
+      res.status(400).json({ error: `Message must be 1-${config.server.maxMessageChars} characters; threadId must be a UUID.` });
+      return;
+    }
+    // Identity comes only from the token; any employeeId in the body is ignored.
+    const employee: Employee = res.locals.employee;
+    await respond(res, { employeeId: employee.id, threadId: body.data.threadId ?? randomUUID(), message: body.data.message });
+  });
+
+  app.post("/api/chat/confirm", requireAuth, async (req, res) => {
+    const body = ConfirmBody.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: "threadId (UUID) and approved (boolean) are required." });
       return;
     }
     const employee: Employee = res.locals.employee;
-    // Any employeeId in the request body is ignored; identity comes only from the token.
-    // Stage 6 adds conversation memory (thread_id + checkpointer); for now each request is one turn.
-    const result = await runTurn({ employeeId: employee.id, history: [], message: body.data.message });
-    console.log(
-      `[chat] ${employee.id} tools=${result.toolCalls.map((t) => t.name).join(",") || "-"} ` +
-        `tokens=${result.usage.inputTokens}/${result.usage.outputTokens}`,
-    );
-    res.json({ reply: result.reply, toolCalls: result.toolCalls, usage: result.usage });
+    await respond(res, { employeeId: employee.id, threadId: body.data.threadId, resume: { approved: body.data.approved } });
   });
 
   // Malformed JSON and unexpected errors. Details go to the server log, not the client.

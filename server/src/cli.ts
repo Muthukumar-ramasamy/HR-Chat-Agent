@@ -5,12 +5,12 @@
 //   npm run graph                -> print the agent graph as a Mermaid diagram
 //
 // --as is a developer shortcut that skips login; the API takes the ID only from a verified JWT.
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { awaitAllCallbacks } from "@langchain/core/callbacks/promises";
-import type { BaseMessage } from "@langchain/core/messages";
 import { buildAgentGraph } from "./agent/graph";
-import { createTurnRunner } from "./agent/run";
+import { createTurnRunner, type TurnEvent } from "./agent/run";
 import { config } from "./config";
 import { getEmployee } from "./hr/repo";
 
@@ -40,47 +40,68 @@ async function main() {
   );
   console.log(`Logged in as ${employee.name} (${employee.id}, ${employee.location})\n`);
 
-  // Conversation so far (already trimmed by the graph). Stage 6 moves this into a checkpointer.
-  let history: BaseMessage[] = [];
-
-  const runAgentTurn = createTurnRunner(graph);
-
-  async function runTurn(text: string) {
-    const { reply, messages, usage } = await runAgentTurn(
-      { employeeId: employee!.id, history, message: text },
-      (e) =>
-        console.log(
-          dim(e.type === "tool_call" ? `  -> ${e.name}(${JSON.stringify(e.args)})` : `  <- ${e.content.slice(0, 160)}`),
-        ),
-    );
-    history = messages;
-    const { modelCalls, inputTokens, outputTokens } = usage;
-    console.log(`\nbot> ${reply}\n`);
-    console.log(dim(`  [${modelCalls} model call${modelCalls === 1 ? "" : "s"}, tokens: ${inputTokens} in / ${outputTokens} out]\n`));
-  }
+  const runner = createTurnRunner(graph);
+  const threadId = randomUUID(); // one conversation per CLI session; memory lives in the checkpointer
+  const logEvent = (e: TurnEvent) =>
+    console.log(dim(e.type === "tool_call" ? `  -> ${e.name}(${JSON.stringify(e.args)})` : `  <- ${e.content.slice(0, 160)}`));
 
   const rl = createInterface({ input, output });
-  // `for await` buffers lines, so input typed while the bot is replying isn't lost.
-  // Input can end (e.g. piped) while a turn is still running; don't prompt after that.
+  // Reading lines through one iterator buffers input typed while the bot is replying,
+  // and lets the confirmation question read the next line too.
+  const lines = rl[Symbol.asyncIterator]();
+  const nextLine = async () => {
+    const { value, done } = await lines.next();
+    return done ? undefined : String(value).trim();
+  };
   let inputClosed = false;
   rl.on("close", () => (inputClosed = true));
-  const prompt = () => !inputClosed && rl.prompt();
+  const ask = (q: string) => {
+    if (!inputClosed) {
+      rl.setPrompt(q);
+      rl.prompt();
+    }
+  };
 
-  rl.setPrompt("you> ");
-  prompt();
-  for await (const line of rl) {
-    const text = line.trim();
+  async function runTurn(text: string) {
+    let result = await runner.run({ employeeId: employee!.id, threadId, message: text }, logEvent);
+    let { modelCalls, inputTokens, outputTokens } = result.usage;
+
+    // apply_leave paused the graph: show the summary, ask, and resume with the answer.
+    while (result.confirmation) {
+      const c = result.confirmation;
+      console.log(
+        `
+  Confirm leave request: ${c.leave_name} ${c.start_date} to ${c.end_date}, ${c.working_days} working day(s), ` +
+          `balance ${c.balance_before} -> ${c.balance_after}${c.reason ? `, reason "${c.reason}"` : ""}`,
+      );
+      ask("  Submit? (y/n) ");
+      const approved = (await nextLine())?.toLowerCase().startsWith("y") ?? false;
+      result = await runner.run({ employeeId: employee!.id, threadId, resume: { approved } }, logEvent);
+      modelCalls += result.usage.modelCalls;
+      inputTokens += result.usage.inputTokens;
+      outputTokens += result.usage.outputTokens;
+    }
+
+    console.log(`
+bot> ${result.reply}
+`);
+    console.log(dim(`  [${modelCalls} model call${modelCalls === 1 ? "" : "s"}, tokens: ${inputTokens} in / ${outputTokens} out]
+`));
+  }
+
+  ask("you> ");
+  for (let text = await nextLine(); text !== undefined; text = await nextLine()) {
     if (text === "exit" || text === "quit") break;
-    if (!text) {
-      prompt();
-      continue;
+    if (text) {
+      try {
+        await runTurn(text);
+      } catch (err) {
+        console.error(`
+[error] ${(err as Error).message}
+`);
+      }
     }
-    try {
-      await runTurn(text); // on failure history is unchanged, so the turn is simply dropped
-    } catch (err) {
-      console.error(`\n[error] ${(err as Error).message}\n`);
-    }
-    prompt();
+    ask("you> ");
   }
 
   rl.close();

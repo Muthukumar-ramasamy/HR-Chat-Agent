@@ -4,28 +4,32 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import jwt from "jsonwebtoken";
-import type { TurnInput } from "../agent/run";
+import { ConfirmationStateError, type TurnInput, type TurnRunner } from "../agent/run";
 import { createApp } from "./app";
 
 const SECRET = "test-secret-0123456789-abcdefghijklmnop";
 process.env.JWT_SECRET = SECRET;
 
+const NOT_PENDING = "00000000-0000-4000-8000-000000000000";
 const seen: TurnInput[] = [];
-const fakeRunTurn = async (input: TurnInput) => {
-  seen.push(input);
-  return {
-    reply: `echo: ${input.message}`,
-    messages: [],
-    toolCalls: [],
-    usage: { modelCalls: 1, inputTokens: 10, outputTokens: 5 },
-  };
+const fakeRunner: TurnRunner = {
+  async run(input) {
+    seen.push(input);
+    if ("resume" in input && input.threadId === NOT_PENDING) throw new ConfirmationStateError("Nothing to confirm.");
+    return {
+      reply: "message" in input ? `echo: ${input.message}` : `resumed: ${input.resume.approved}`,
+      toolCalls: [],
+      usage: { modelCalls: 1, inputTokens: 10, outputTokens: 5 },
+    };
+  },
+  hasPendingConfirmation: async () => false,
 };
 
 let server: Server;
 let base = "";
 
 before(async () => {
-  server = createApp(fakeRunTurn).listen(0);
+  server = createApp(fakeRunner).listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
   base = `http://localhost:${(server.address() as AddressInfo).port}`;
 });
@@ -93,4 +97,26 @@ test("/api/me returns the logged-in employee", async () => {
   const { status, json } = await call("/api/me", undefined, token);
   assert.equal(status, 200);
   assert.equal(json.employee.id, "E1002");
+});
+
+test("chat starts a thread when none is given and reuses the one provided", async () => {
+  const token = await loginAs("asha.rao@example.com");
+  const first = await call("/api/chat", { message: "hi" }, token);
+  assert.match(first.json.threadId, /^[0-9a-f-]{36}$/);
+  const second = await call("/api/chat", { message: "again", threadId: first.json.threadId }, token);
+  assert.equal(second.json.threadId, first.json.threadId);
+  assert.equal(seen.at(-1)?.threadId, first.json.threadId);
+  assert.equal((await call("/api/chat", { message: "x", threadId: "not-a-uuid" }, token)).status, 400);
+});
+
+test("confirm resumes with the decision; 409 when nothing is pending", async () => {
+  const token = await loginAs("asha.rao@example.com");
+  const threadId = "11111111-1111-4111-8111-111111111111";
+  const ok = await call("/api/chat/confirm", { threadId, approved: false }, token);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.reply, "resumed: false");
+  assert.equal(seen.at(-1)?.employeeId, "E1001");
+  assert.equal((await call("/api/chat/confirm", { threadId: NOT_PENDING, approved: true }, token)).status, 409);
+  assert.equal((await call("/api/chat/confirm", { threadId, approved: "yes" }, token)).status, 400);
+  assert.equal((await call("/api/chat/confirm", { threadId, approved: true })).status, 401);
 });

@@ -15,13 +15,13 @@ work without missing context. Update it at the end of every stage.
 | 3 | LangGraph agent wiring all tools | ✅ Done — user-tested, all cases |
 | 4 | `search_policy` RAG over policy docs (local BM25 keyword search) | ✅ Done — user-tested, all 5 cases (incl. policy + data milestone) |
 | 5 | Express API + JWT login, employee_id from token into state | ✅ Done — user-tested via PowerShell |
-| 6 | Conversation memory (checkpointer) + `apply_leave` interrupt | Not started |
+| 6 | Conversation memory (checkpointer) + `apply_leave` interrupt | ✅ Done — user-tested (approve, duplicate blocked, cancel) |
 | 7 | React + MUI chat UI | Not started |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | Tracing wired in Stage 1 (env-only); rest not started |
 
-**Next action:** Stage 6 — conversation memory (checkpointer keyed by thread_id) + apply_leave with interrupt confirmation.
+**Next action:** Stage 7 — React + MUI chat UI (login, chat with threadId, confirmation dialog for apply_leave). Note: demo DB has test request #9 — run `npm run db:reset` before recording.
 
-**Commits:** `6d4384a` Stage 1 · `816929d` Stage 2 · `a0af586` Stage 3 · `85dbcf8` Stage 4.
+**Commits:** `6d4384a` Stage 1 · `816929d` Stage 2 · `a0af586` Stage 3 · `85dbcf8` Stage 4 · `5f9d4c6` Stage 5.
 
 ---
 
@@ -69,7 +69,8 @@ HR bot/
         ├── agent/
         │   ├── prompt.ts  # buildSystemPrompt() — today's date + rules
         │   ├── state.ts   # AgentState: messages + employeeId (Annotation)
-        │   ├── run.ts     # createTurnRunner(graph): one turn -> {reply, messages, toolCalls, usage}
+        │   ├── run.ts     # createTurnRunner(graph): run({employeeId, threadId, message | resume}) -> {reply, confirmation?, toolCalls, usage}
+        │   ├── graph.test.ts  # real graph + scripted fake model + temp DB (interrupt, memory, trim)
         │   └── graph.ts   # buildAgentGraph(): agent -> tools -> agent ... -> trim -> END
         ├── tools/
         │   └── index.ts   # the 7 HR tools (hrTools array), incl. search_policy
@@ -80,6 +81,8 @@ HR bot/
         │   ├── dates.ts         # ISO date helpers (UTC), today() (APP_TODAY override)
         │   ├── leaveMath.ts     # pure deterministic calculations
         │   ├── leaveMath.test.ts
+        │   ├── leaveRequest.ts      # validateLeaveRequest(): hard rules before confirmation
+        │   ├── leaveRequest.test.ts
         │   └── repo.ts          # read-only SQL queries
         └── db/
             ├── schema.ts  # CREATE TABLE statements
@@ -97,7 +100,7 @@ HR bot/
 | `npm run chat` | CLI chat as E1001 (Asha). `npm run chat -- --as E1003` to be another seeded employee |
 | `npm run graph` | Print the agent graph as a Mermaid diagram (for README) |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | Unit tests (`node:test` via tsx): leave math, retry handler, policy retrieval, API/auth (24). No LLM calls |
+| `npm test` | All tests (36): leave math, retry handler, retrieval, API/auth, leave validation, graph (scripted model). No LLM calls |
 
 Code runs with `tsx` (TypeScript executed directly, no build step).
 
@@ -602,6 +605,100 @@ startup; prints "Cannot start server: ..." and exits 1 on config errors.
 
 ---
 
+## Stage 6 — Conversation memory + apply_leave with confirmation (interrupt)
+
+### What was built
+
+**Checkpointer**: `buildAgentGraph({ model?, checkpointer? })` compiles with `MemorySaver` by default (model and
+checkpointer injectable for tests). State (messages + employeeId) is saved after every step under `thread_id`.
+Memory is in-process: lost on server restart (`npm run dev` restarts on file changes; use `npm start` for demos).
+The SQLite checkpointer package needs better-sqlite3 12 (we use 13) → not used; persistent memory = future enhancement.
+
+**Threads are per employee**: the runner uses `thread_id = "<employeeId>:<threadId>"`, so a guessed/shared threadId
+can never load or resume another employee's conversation.
+
+**History cap** (token rule): the `trim` node removes tool traffic **and** keeps only the last
+`MAX_HISTORY_MESSAGES = 8` messages (4 Q&A pairs), starting on a human message.
+
+**Validation ([hr/leaveRequest.ts](../server/src/hr/leaveRequest.ts))** — `validateLeaveRequest(employee, type, start, end)`
+→ `{ok, summary}` or `{ok: false, problems[]}`. Hard rules in code (writes must be deterministic):
+not in the past (SL may be backdated) · ≥ 1 working day · tenure (EL 6 months) · working days ≤ available ·
+CL ≤ 3 consecutive working days (Policy §2) · EL ≥ 3 days needs 7 days' notice (Policy §4) · no overlap with
+approved/pending requests. Summary: leave_type, leave_name, dates, working_days, balance_before/after.
+(D23 still holds for *answers*; for *writes* the same prose rules are now also enforced in code.)
+
+**Tool `apply_leave({leave_type, start_date, end_date, reason?})`**: validate → if problems, return them (no pause)
+→ `interrupt({type: "confirm_leave", ...summary, reason}, {responseSchema: {approved: boolean}})` → if approved,
+`repo.createLeaveRequest` (status `pending`, the only DB write in the app) → `{submitted, request_id, status,
+balance_after}`; if cancelled → "nothing was saved". On resume LangGraph re-runs the tool from the top, so everything
+before `interrupt()` is side-effect free.
+
+**Runner ([agent/run.ts](../server/src/agent/run.ts))**: `createTurnRunner(graph)` → `{ run, hasPendingConfirmation }`.
+`run({employeeId, threadId, message})` sends only the new HumanMessage (history comes from the checkpointer);
+`run({employeeId, threadId, resume: {approved}})` sends `new Command({resume})`. Interrupts arrive in the "updates"
+stream as `__interrupt__` → result has `confirmation` and empty `reply`. `ConfirmationStateError` if resuming with
+nothing pending, or sending a message while a confirmation is pending (prevents a dangling tool call in history).
+
+**API**: `POST /api/chat {message, threadId?}` (new UUID if omitted) and `POST /api/chat/confirm {threadId, approved}`
+→ `{threadId, reply, confirmation?, toolCalls, usage}`; `ConfirmationStateError` → 409; threadId must be a UUID.
+
+**CLI**: one thread per session (`randomUUID`); on confirmation prints the summary and asks "Submit? (y/n)", then
+resumes. Reads input through one async iterator so the y/n answer comes from the same stream.
+
+**Prompt**: "To apply, call apply_leave once dates and type are known (ask only if missing). The app asks the user
+to confirm; don't ask yourself. If it returns problems, explain them." Size now ~303 + ~908 tok (8 tools).
+
+**Seed** is now `export function seed({reset, quiet})` (CLI still `npm run db:seed` / `db:reset`) so tests can
+seed a throwaway DB.
+
+### Concepts introduced
+
+- **Checkpointer**: saves graph state per `thread_id` after each step → memory across requests, and the ability to
+  stop mid-run and continue later.
+- **Interrupt (human-in-the-loop)**: `interrupt(value)` pauses the graph and surfaces `value` to the caller;
+  `new Command({resume})` continues it, and `interrupt()` returns the resume value. The node re-runs from the start
+  on resume → keep side effects after the interrupt.
+- **Validate before asking**: only ask the human to confirm things the system would actually accept.
+
+### Verified (no LLM)
+
+- `npm run typecheck`; `npm test` **36/36**:
+  - leaveRequest (5): valid EL Dec 22–Jan 2 summary (7 days, 21 → 14) · CL 5 days rejected, 3 OK · EL 3 days with
+    2 days' notice rejected, 2 days OK · Priya EL tenure · balance · past date · overlap with pending #4 ·
+    weekend-only range · SL backdated OK.
+  - graph (5, real graph + scripted model + temp DB): pause → nothing written → new message refused → approve →
+    row written (pending, 7 days) → history trimmed to [human, ai] → second resume refused · cancel writes nothing ·
+    rule violation returns problems without pausing · same threadId for another employee = separate (no pending,
+    resume refused) · 6 turns → last 8 messages kept, starting at "question 3".
+  - API (+2): threadId created/reused, non-UUID 400 · confirm 200 / 409 / 400 / 401.
+- Demo DB untouched by tests (still 8 requests).
+- Live (user): "Apply for earned leave from Dec 22 to Jan 2 for a family trip" → apply_leave → confirmation (7 days,
+  21 → 14) → y → request #9 pending; 2 model calls, 4230 in / 234 out. Bot invented "you will be notified" → prompt
+  rule added: "Don't promise actions or notifications the tools didn't report." Re-applying the same dates →
+  blocked by overlap check ("Overlaps existing pending EL request #9"), no confirmation, nothing saved; 4273 in / 214 out.
+  "Apply 1 day casual leave on Nov 3" → confirmation (10 → 9) → n → "nothing was saved"; 4372 in / 153 out. Model
+  invented reason "Personal" → `reason` field now described "Only if the user gave one". CL 5-day rejection covered
+  by graph/validation tests (not re-run live).
+
+### How to test
+
+CLI (`npm run chat`, Asha):
+1. "Apply for earned leave from Dec 22 to Jan 2 for a family trip" → summary (7 days, 21 → 14) → `y` → submitted
+   (request id). Then "What's my EL balance?" → 14 available (the new request is pending, so it is reserved).
+2. "Apply casual leave Nov 2 to Nov 6" → explains the 3-day CL limit, no confirmation asked.
+3. "Apply 1 day casual leave on Nov 3" → `n` → nothing saved.
+4. Follow-up memory: "Can I take Dec 22 to Jan 2 off?" then "what about sick leave instead?"
+
+API (after `npm run dev`, PowerShell, `$h` from Stage 5 login):
+```powershell
+$r = Invoke-RestMethod -Method Post -Uri http://localhost:3001/api/chat -Headers $h -ContentType 'application/json' -Body '{"message":"Apply 1 day casual leave on Nov 4"}'
+$r.confirmation
+Invoke-RestMethod -Method Post -Uri http://localhost:3001/api/chat/confirm -Headers $h -ContentType 'application/json' -Body (@{threadId=$r.threadId; approved=$true} | ConvertTo-Json)
+```
+To undo test requests afterwards: `npm run db:reset` (reseeds the synthetic demo data).
+
+---
+
 ## Decisions log
 
 | # | Decision | Reason |
@@ -633,6 +730,13 @@ startup; prints "Cannot start server: ..." and exits 1 on config errors.
 | D26 | `createApp(runTurn)` dependency injection | API + auth fully tested with a fake agent, no Claude credit spent |
 | D27 | API chat single-turn until Stage 6 | Memory belongs to the checkpointer; never trust client-sent history |
 | D28 | Message limit 1000 chars, JSON body 10kb | Protects the $5 credit and the server |
+| D29 | `MemorySaver` (in-process) checkpointer | SQLite checkpointer package pins better-sqlite3 12 (native, Node 25 risk). Persistent memory = future |
+| D30 | Thread key = `employeeId:threadId` | Ownership without a threads table; guessed IDs can't cross users |
+| D31 | History capped at 8 messages (4 Q&A) in `trim` | Token rule; long chats don't grow cost |
+| D32 | Leave rules enforced in code before the interrupt (incl. CL 3-day, EL notice) | Writes must be deterministic; only ask to confirm valid requests |
+| D33 | New message while a confirmation is pending → 409 | Avoids a dangling tool call in history (Anthropic rejects tool_use without tool_result) |
+| D34 | Graph tests use a scripted fake model + temp SQLite DB | Full agent flow tested with zero Claude spend |
+| D35 | `useTempDb()` helper ([db/tempDb.ts](../server/src/db/tempDb.ts)): tests touching leave data get a fresh seeded temp DB | leaveRequest tests broke after a live test added request #9 to the demo DB; tests must not depend on demo data |
 | D19 | Stage 4 retrieval = local keyword (BM25-style) search, no embeddings (user choice, 2026-10-03) | Anthropic has no embeddings API; keyword search needs no API calls/tokens/second provider and suits a small set of well-headed policy docs. Vector search = future enhancement. CLAUDE.md stack updated |
 
 ## Open items / reminders

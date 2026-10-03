@@ -8,7 +8,9 @@
 // SECURITY: no tool accepts an employee ID. The ID comes from graph state
 // (runtime.state.employeeId), which only our code sets — from the verified login.
 import { tool, type ToolRuntime } from "@langchain/core/tools";
+import { interrupt } from "@langchain/langgraph";
 import { z } from "zod";
+import { validateLeaveRequest, type LeaveRequestSummary } from "../hr/leaveRequest";
 import { today } from "../hr/dates";
 import {
   countWorkingDays,
@@ -27,6 +29,10 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
 const leaveType = z.enum(["CL", "SL", "EL"]); // meanings are in the system prompt
 
 type Runtime = ToolRuntime<AgentStateType>;
+
+// What the app shows when apply_leave pauses, and the answer it resumes with.
+export type LeaveConfirmation = { type: "confirm_leave"; reason: string | null } & LeaveRequestSummary;
+export const ConfirmDecision = z.object({ approved: z.boolean() });
 
 function currentEmployee(runtime: Runtime): repo.Employee {
   const id = runtime?.state?.employeeId;
@@ -237,7 +243,49 @@ export const searchPolicy = tool(
   },
 );
 
+// Human-in-the-loop write. Order matters:
+//   1. validate in code (nothing to confirm if it would be rejected)
+//   2. interrupt(): the graph pauses and the app shows the summary to the user
+//   3. resumed with {approved}: only then write to the database
+// On resume, LangGraph re-runs this tool from the top; interrupt() then returns the user's
+// answer instead of pausing. Steps before it must therefore be side-effect free.
+export const applyLeave = tool(
+  async ({ leave_type, start_date, end_date, reason }, runtime: Runtime) => {
+    const e = currentEmployee(runtime);
+    const check = validateLeaveRequest(e, leave_type, start_date, end_date);
+    if (!check.ok) return json({ submitted: false, problems: check.problems });
+
+    const confirmation: LeaveConfirmation = { type: "confirm_leave", ...check.summary, reason: reason ?? null };
+    const decision = interrupt(confirmation, { responseSchema: ConfirmDecision });
+    if (!decision.approved) return json({ submitted: false, note: "User cancelled; nothing was saved." });
+
+    const id = repo.createLeaveRequest({
+      employeeId: e.id,
+      leaveType: leave_type,
+      startDate: start_date,
+      endDate: end_date,
+      days: check.summary.working_days,
+      reason: reason ?? null,
+      appliedOn: today(),
+    });
+    return json({ submitted: true, request_id: id, status: "pending manager approval", balance_after: check.summary.balance_after });
+  },
+  {
+    name: "apply_leave",
+    description:
+      "Submit a leave request for the user. The app asks the user to confirm before saving, so call it directly " +
+      "(don't ask for confirmation yourself). Returns problems instead if the request breaks a rule.",
+    schema: z.object({
+      leave_type: leaveType,
+      start_date: isoDate,
+      end_date: isoDate,
+      reason: z.string().max(200).optional().describe("Only if the user gave one"),
+    }),
+  },
+);
+
 export const hrTools = [
+  applyLeave,
   searchPolicy,
   getEmployeeProfile,
   getLeaveBalance,
