@@ -29,11 +29,10 @@ work without missing context. Update it at the end of every stage.
 
 - Windows 11, PowerShell. Node **v25.9.0** (Current, not LTS), npm 11.12.1.
 - `better-sqlite3` verified working on Node 25 (prebuilt binary, no compiler needed).
-- Git repo at project root. Git identity in this repo (confirmed by user):
-  `muthukumar.ramasamy@ideas2it.com`.
-- **Budget: only $5 of Claude API credit for the whole project** (user, 2026-10-03). Haiku 4.5 = $1/M input,
-  $5/M output; a typical turn (~3.5k in / ~200 out) ≈ $0.005 → roughly 1,000 turns. Assistant does not run live
-  Claude calls; prefer no-LLM checks. If credit runs low, switch to `LLM_PROVIDER=google` (free tier).
+- Git repo at project root.
+- **Cost:** Haiku 4.5 = $1/M input, $5/M output; a typical turn (~3.5k in / ~200 out) ≈ $0.005. Prefer no-LLM
+  checks (unit tests, direct tool calls, scripted fake model) over live calls. `LLM_PROVIDER=google` is a
+  free-tier fallback.
 - **LLM: Claude Haiku 4.5 (`claude-haiku-4-5`) via `@langchain/anthropic`** — switched from Gemini on
   2026-10-03 at user request ("use the model that uses the fewest tokens"). Needs `ANTHROPIC_API_KEY` in
   `server/.env`. Gemini remains available with `LLM_PROVIDER=google` (free tier: only 5 requests/minute).
@@ -541,7 +540,7 @@ policy answers only from search_policy results with citation "(Leave Policy §4)
   leave" → none, cap/threshold).
 - Spot checks: "what is LOP" → §7 only; "maternity leave" → §10 only; "leave" → none.
 - Size: system prompt ~255 tok, 7 tool schemas ~738 tok (was ~187/~637 with 6 tools).
-- User-tested live (2026-10-03): all 5 cases below pass, including the Saturday milestone.
+- User-tested live (2026-10-03): all 5 cases below pass, including the agent-core milestone.
 
 ### How to test
 
@@ -774,12 +773,11 @@ Then `npm run db:reset` (server) to remove test requests.
 - **[README.md](../README.md)** (for evaluators): capabilities table, quick start (Node ≥ 22.12, `npm run setup`,
   .env table, `npm run dev`, demo accounts), Mermaid **system architecture**, **agent graph**, **apply_leave sequence**
   diagram, tools table, design decisions (math in code, identity, validate-then-confirm, grounded BM25 RAG, token
-  budget table with measured costs, provider-agnostic), security, testing (36 tests), structure, limitations/future.
+  token-efficiency table with measured costs, provider-agnostic), security, testing (36 tests), structure, limitations/future.
 - **[docs/DEMO_SCRIPT.md](DEMO_SCRIPT.md)**: ~6-minute recording plan following the CLAUDE.md demo steps (+ "not
   covered" and CL-limit extras), timings, what to point out, LangSmith trace moment, ~$0.05 per run.
 - Root `package.json` `engines: node >= 22.12` (Vite needs ^20.19 || ≥ 22.12; better-sqlite3 13 needs ≥ 22).
-- Full-history secret scan (all commits): no API keys / JWT secrets / .env / .db ever committed. Only personal data
-  in tracked files: git author email (also in commit metadata).
+- Full-history secret scan (all commits): no API keys / JWT secrets / .env / .db ever committed.
 - Pending: public GitHub repo + push (needs user's account + repo name), demo recording, submission.
 
 ---
@@ -795,7 +793,7 @@ Then `npm run db:reset` (server) to remove test requests.
 | D5 | `moduleResolution: "bundler"` + `tsx` | Extensionless imports like a React/Vite project; no build step |
 | D6 | No salary data in DB | Not needed for leave features; avoids sensitive-looking fields. Encashment (Stage 2) will take a per-day amount as input or return days only |
 | D7 | Seed skips when data exists; reset is explicit | Avoids accidental data loss |
-| D8 | Neon (hosted Postgres) setup proposed and declined; stay on SQLite | Keeps scope small for the deadline; no external services or global installs |
+| D8 | Neon (hosted Postgres) setup proposed and declined; stay on SQLite | Keeps scope small; no external services or global installs |
 | D9 | Default model `gemini-3.8-flash` | `gemini-2.5-flash` is closed to new API keys (404) |
 | D10 | Turn on LangSmith tracing in Stage 1 instead of Stage 8 | User wants to track requests now; also lets us watch tool calling as it's built |
 | D11 | Stage 2 uses a hand-written tool loop; LangGraph comes in Stage 3 | Learning: see the raw agent loop before the framework abstracts it |
@@ -805,16 +803,16 @@ Then `npm run db:reset` (server) to remove test requests.
 | D15 | `APP_TODAY` env override for "today" | Reproducible demo answers ("next week" etc.) |
 | D16 | Multi-year leave ranges checked against current-year balance (with a note) | Next year's allocation doesn't exist yet; keep it simple |
 | D17 | Unit tests with built-in `node:test` via `tsx --test` | No extra test framework needed |
-| D18 | Default LLM = Claude Haiku 4.5 (`claude-haiku-4-5`), Gemini kept as option | User has a Claude key and asked for the lowest-token model; Haiku 4.5 is the cheapest Claude ($1/$5 per M tokens) |
+| D18 | Default LLM = Claude Haiku 4.5 (`claude-haiku-4-5`), Gemini kept as option | Lowest-token Claude model; Haiku 4.5 is the cheapest Claude ($1/$5 per M tokens) |
 | D20 | Graph state via `Annotation` (not Zod) | `MessagesZodState` lost the messages type under Zod v4 |
 | D21 | System prompt prepended per model call, not stored in state | Keeps saved history small; date always current |
 | D22 | History trimming moved into a `trim` graph node (RemoveMessage) | Works the same once a checkpointer stores state (Stage 6) |
 | D23 | Policy rules that only exist in prose (CL max 3 days, EL notice, SL certificate) are applied by the LLM via RAG, not coded | Shows policy + data reasoning; keeps code to quantitative rules |
 | D24 | Retriever returns nothing unless a distinctive word matches; max 3 hits ≥ 50% of best | Fewer tokens; enables honest "not covered" answers |
 | D25 | JWT (HS256, 8h) in `Authorization: Bearer`, no refresh tokens | Simple and stateless; enough for a demo. Refresh/rotation = future |
-| D26 | `createApp(runTurn)` dependency injection | API + auth fully tested with a fake agent, no Claude credit spent |
+| D26 | `createApp(runTurn)` dependency injection | API + auth fully tested with a fake agent, no LLM calls |
 | D27 | API chat single-turn until Stage 6 | Memory belongs to the checkpointer; never trust client-sent history |
-| D28 | Message limit 1000 chars, JSON body 10kb | Protects the $5 credit and the server |
+| D28 | Message limit 1000 chars, JSON body 10kb | Limits token cost and protects the server |
 | D29 | `MemorySaver` (in-process) checkpointer | SQLite checkpointer package pins better-sqlite3 12 (native, Node 25 risk). Persistent memory = future |
 | D30 | Thread key = `employeeId:threadId` | Ownership without a threads table; guessed IDs can't cross users |
 | D31 | History capped at 8 messages (4 Q&A) in `trim` | Token rule; long chats don't grow cost |
@@ -826,11 +824,10 @@ Then `npm run db:reset` (server) to remove test requests.
 | D37 | Vite dev proxy for `/api` | One origin in the browser; no CORS issues in dev |
 | D38 | Show tools + model calls + tokens under each reply | Makes agent reasoning and cost visible in the demo |
 | D39 | Root `package.json` with `concurrently` (not npm workspaces) | One command for API + UI without changing how server/ and client/ install their own node_modules |
-| D19 | Stage 4 retrieval = local keyword (BM25-style) search, no embeddings (user choice, 2026-10-03) | Anthropic has no embeddings API; keyword search needs no API calls/tokens/second provider and suits a small set of well-headed policy docs. Vector search = future enhancement. CLAUDE.md stack updated |
+| D19 | Stage 4 retrieval = local keyword (BM25-style) search, no embeddings | Anthropic has no embeddings API; keyword search needs no API calls/tokens/second provider and suits a small set of well-headed policy docs. Vector search = future enhancement. CLAUDE.md stack updated |
 
 ## Open items / reminders
 
-- Git identity confirmed: commits use muthukumar.ramasamy@ideas2it.com (user choice).
 - Stage 4 policy docs must match the `leave_types` rules above (quotas, tenure, carry-forward,
   encashment max 15 days/yr, pro-rata rule "joined on/before 15th counts the month").
 - Stage 4: update the system prompt line "HR policy documents are not connected yet".

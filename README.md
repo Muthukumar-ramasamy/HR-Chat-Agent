@@ -190,8 +190,7 @@ the policy doesn't cover it. Answers cite the source section.
 structured. Local BM25 needs no second provider, no API calls and no tokens, and it is deterministic and testable.
 A small synonym map (vacation → earned leave, WFH → work from home, ...) covers common paraphrases.
 
-**Token budget as a design constraint.** The project ran on $5 of Claude credit, so every choice was made for low
-token use:
+**Token efficiency as a design goal.** Every request costs tokens, so each choice was made for low token use:
 
 | Lever | Choice |
 |---|---|
@@ -279,4 +278,4 @@ prompts, tool inputs/outputs and token counts.
   currently checked against the current year's balance).
 - **Prompt caching** once the cached prefix reaches Haiku 4.5's 4,096-token minimum (or on a model with a lower
   minimum).
-- **Evaluation set:** a scripted set of questions with expected tool calls and answers, run in CI with a small budget.
+- **Evaluation set:** a scripted set of questions with expected tool calls and answers, run in CI.

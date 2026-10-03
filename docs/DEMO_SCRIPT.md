@@ -4,7 +4,7 @@ Recording checklist:
 - `npm run db:reset` (clean synthetic data), then `npm run dev`. Do not use `dev:watch`: a restart clears chat memory.
 - Optional: set `APP_TODAY=2026-10-05` in `server/.env` so dates match this script exactly.
 - Browser at http://localhost:5173, and LangSmith open on the `hr-agent` project in a second tab.
-- Cost: one full run is about 8 questions, roughly $0.05 of Claude credit.
+- One full run is about 8 questions (roughly $0.05 of API usage on Claude Haiku 4.5).
 
 | # | Time | Do | Point out |
 |---|---|---|---|

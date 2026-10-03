@@ -6,22 +6,20 @@
 
 ## Goal
 Build an HR Chat Agent for the Agentic AI program first-round assessment.
-Deadline: Tue Oct 6, 1:00 PM. Target: submit by Sunday night (Monday is unavailable).
 Submission: demo video, public GitHub repo, architecture documentation.
 
 Evaluation criteria: implementation quality, agentic approach, framework usage,
 tool integration, architecture, completeness.
 
-## Developer context
-- I'm a React/TypeScript frontend developer, new to building agents.
-- I want to LEARN while building: explain each new concept briefly as we implement it
-  (tool calling, agent loop, RAG, state, checkpointers, interrupts).
-- Build in small stages. After each stage, it must run, and I test it before moving on.
+## Working style
+- Build in small stages. After each stage, it must run and be tested before moving on.
+- Explain each new concept briefly as it is implemented (tool calling, agent loop, RAG,
+  state, checkpointers, interrupts).
 
 ## Stack
 - Language: TypeScript (Node.js) end to end
 - Agent framework: LangGraph.js (@langchain/langgraph)
-- LLM: Claude Haiku 4.5 (@langchain/anthropic) — cheapest/lowest-token model; Gemini kept as a
+- LLM: Claude Haiku 4.5 (@langchain/anthropic) — lowest-token Claude model; Gemini kept as a
   config option (@langchain/google-genai)
 - Retrieval: local keyword (BM25-style) search over policy doc sections, built at startup —
   no embeddings API, zero tokens (Anthropic has no embeddings; vector search = future enhancement)
@@ -29,7 +27,7 @@ tool integration, architecture, completeness.
 - Backend: Express API
 - Frontend: React + MUI (Vite), minimal chat UI
 - Auth: JWT login against seeded users (bcrypt-hashed passwords)
-- Tracing: LangSmith (free tier) to show agent reasoning in the demo
+- Tracing: LangSmith to show agent reasoning in the demo
 
 ## Agent tools
 - search_policy(query): RAG over HR policy documents; answers must cite doc + section
@@ -48,37 +46,38 @@ tool integration, architecture, completeness.
   employees' data must be refused.
 - If the policy docs don't cover a question, the agent says so instead of guessing.
 - Conversation memory via a LangGraph checkpointer keyed by thread_id.
-- Retry with backoff on Gemini 429 (rate limit) errors; free tier has tight limits.
-- Model provider must be swappable in one place (config), in case we move to Claude/OpenAI.
+- Retry with backoff on rate-limit (429) errors.
+- Model provider must be swappable in one place (config).
 - Minimize tokens in everything: lean prompts and tool descriptions, compact tool results,
-  no redundant tool calls, trimmed history, short answers, cheapest adequate model
+  no redundant tool calls, trimmed history, short answers, lowest-cost adequate model
   (currently Claude Haiku 4.5). Report token impact of changes.
 
 ## Security / data rules
 - Only synthetic employees, balances, and sample policy docs. No real HR or company data.
 - API keys only in .env (gitignored). Commit a .env.example with placeholder values.
 - Never commit secrets; check before every push.
+- Project files describe design goals only; no personal details or constraints.
 
 ## Plan
-### Saturday — agent core
-1. Project setup, SQLite schema + synthetic seed data, bare Gemini chat loop (CLI)
+### Agent core
+1. Project setup, SQLite schema + synthetic seed data, bare chat loop (CLI)
 2. HR tools + tool calling
 3. LangGraph agent wiring all tools
 4. search_policy RAG over policy docs
 Milestone: CLI answers "Can I take 5 days off next week?" by combining policy + data.
 
-### Sunday — product + submission
+### Product + submission
 5. Login + JWT, employee_id injected into state
 6. Conversation memory + apply_leave with confirmation (interrupt)
 7. React + MUI chat UI connected to the backend
 8. LangSmith tracing, README with architecture diagram (Mermaid) and design decisions,
    record demo, push to GitHub, submit
 
-Scope rule: if a stage overruns by more than an hour, keep it basic and move on.
+Scope rule: if a stage grows too large, keep it basic and move on.
 
-### Stretch goals (only if time remains)
+### Stretch goal
 - Manager role with team leave view
-(Otherwise list under "Future enhancements" in the README.)
+(Otherwise listed under "Future enhancements" in the README.)
 
 ## Demo script
 1. Pure policy question → answer with citation
