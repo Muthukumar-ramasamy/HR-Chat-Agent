@@ -2,7 +2,22 @@ import { config as loadEnv } from "dotenv";
 
 loadEnv({ quiet: true });
 
-export type LlmProvider = "google";
+export type LlmProvider = "anthropic" | "google";
+
+const DEFAULT_MODEL: Record<LlmProvider, string> = {
+  anthropic: "claude-haiku-4-5", // smallest/cheapest Claude model
+  google: "gemini-3.8-flash",
+};
+
+const API_KEY_VAR: Record<LlmProvider, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GOOGLE_API_KEY",
+};
+
+const provider = (process.env.LLM_PROVIDER ?? "anthropic") as LlmProvider;
+if (!(provider in DEFAULT_MODEL)) {
+  throw new Error(`Unsupported LLM_PROVIDER "${provider}". Use one of: ${Object.keys(DEFAULT_MODEL).join(", ")}`);
+}
 
 function required(name: string): string {
   const value = process.env[name];
@@ -17,13 +32,18 @@ function required(name: string): string {
 export const config = {
   dbPath: process.env.DB_PATH ?? "./data/hr.db",
 
+  // Optional fixed "today" (YYYY-MM-DD) for reproducible demos; defaults to the real date.
+  appToday: process.env.APP_TODAY || undefined,
+
   llm: {
-    provider: (process.env.LLM_PROVIDER ?? "google") as LlmProvider,
-    model: process.env.LLM_MODEL ?? "gemini-3.8-flash",
+    provider,
+    model: process.env.LLM_MODEL || DEFAULT_MODEL[provider],
     temperature: 0,
-    // Retries use exponential backoff (~1s, 2s, 4s, ...); covers free-tier 429s.
+    // Cap on each reply's length. HR answers are short; this bounds output-token spend.
+    maxTokens: 1024,
+    // Retries use exponential backoff (~1s, 2s, 4s, ...) on 429/5xx.
     maxRetries: 6,
-    apiKey: () => required("GOOGLE_API_KEY"),
+    apiKey: () => required(API_KEY_VAR[provider]),
   },
 
   // LangChain picks up LANGSMITH_* env vars on its own; this is only for display.

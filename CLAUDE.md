@@ -49,6 +49,9 @@ tool integration, architecture, completeness.
 - Conversation memory via a LangGraph checkpointer keyed by thread_id.
 - Retry with backoff on Gemini 429 (rate limit) errors; free tier has tight limits.
 - Model provider must be swappable in one place (config), in case we move to Claude/OpenAI.
+- Minimize tokens in everything: lean prompts and tool descriptions, compact tool results,
+  no redundant tool calls, trimmed history, short answers, cheapest adequate model
+  (currently Claude Haiku 4.5). Report token impact of changes.
 
 ## Security / data rules
 - Only synthetic employees, balances, and sample policy docs. No real HR or company data.
