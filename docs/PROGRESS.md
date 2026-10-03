@@ -12,16 +12,16 @@ work without missing context. Update it at the end of every stage.
 |---|---|---|
 | 1 | Project setup, SQLite schema + synthetic seed, bare Gemini CLI chat | ✅ Done — user-tested (chat, memory, LangSmith traces) |
 | 2 | HR tools + tool calling (+ switch to Claude Haiku 4.5, token diet) | ✅ Done — user-tested |
-| 3 | LangGraph agent wiring all tools | ✅ Done — user-tested (Dec 22–Jan 2, refusal); follow-up + Priya EL not re-run |
-| 4 | `search_policy` RAG over policy docs | Not started |
+| 3 | LangGraph agent wiring all tools | ✅ Done — user-tested, all cases |
+| 4 | `search_policy` RAG over policy docs (local BM25 keyword search) | ✅ Done — user-tested, all 5 cases (incl. policy + data milestone) |
 | 5 | Login + JWT, employee_id injected into state | Not started |
 | 6 | Conversation memory (checkpointer) + `apply_leave` interrupt | Not started |
 | 7 | React + MUI chat UI | Not started |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | Tracing wired in Stage 1 (env-only); rest not started |
 
-**Next action:** Stage 4 — synthetic policy docs + local keyword search + `search_policy` tool with doc/section citations.
+**Next action:** Stage 5 — Express API + JWT login (bcrypt against seeded users), employeeId from the verified token into graph state.
 
-**Commits:** `6d4384a` Stage 1 · `816929d` Stage 2.
+**Commits:** `6d4384a` Stage 1 · `816929d` Stage 2 · `a0af586` Stage 3.
 
 ---
 
@@ -31,6 +31,9 @@ work without missing context. Update it at the end of every stage.
 - `better-sqlite3` verified working on Node 25 (prebuilt binary, no compiler needed).
 - Git repo at project root. Git identity in this repo (confirmed by user):
   `muthukumar.ramasamy@ideas2it.com`.
+- **Budget: only $5 of Claude API credit for the whole project** (user, 2026-10-03). Haiku 4.5 = $1/M input,
+  $5/M output; a typical turn (~3.5k in / ~200 out) ≈ $0.005 → roughly 1,000 turns. Assistant does not run live
+  Claude calls; prefer no-LLM checks. If credit runs low, switch to `LLM_PROVIDER=google` (free tier).
 - **LLM: Claude Haiku 4.5 (`claude-haiku-4-5`) via `@langchain/anthropic`** — switched from Gemini on
   2026-10-03 at user request ("use the model that uses the fewest tokens"). Needs `ANTHROPIC_API_KEY` in
   `server/.env`. Gemini remains available with `LLM_PROVIDER=google` (free tier: only 5 requests/minute).
@@ -48,6 +51,10 @@ HR bot/
     ├── tsconfig.json      # strict, noEmit, moduleResolution "bundler" (extensionless imports)
     ├── .env.example       # placeholders only; real keys go in server/.env
     ├── data/hr.db         # generated SQLite file (gitignored)
+    ├── policies/          # synthetic HR policy docs (markdown, '## N. Title' sections)
+    │   ├── leave-policy.md        # 10 sections
+    │   ├── holiday-policy.md      # 4 sections
+    │   └── attendance-policy.md   # 4 sections
     └── src/
         ├── config.ts      # all runtime settings in one place
         ├── llm.ts         # createChatModel() — the ONLY place the provider is chosen (anthropic | google); Gemini retry handler
@@ -58,7 +65,10 @@ HR bot/
         │   ├── state.ts   # AgentState: messages + employeeId (Annotation)
         │   └── graph.ts   # buildAgentGraph(): agent -> tools -> agent ... -> trim -> END
         ├── tools/
-        │   └── index.ts   # the 6 HR tools (hrTools array)
+        │   └── index.ts   # the 7 HR tools (hrTools array), incl. search_policy
+        ├── rag/
+        │   ├── policyIndex.ts       # parsePolicy, tokenize/stem, BM25 PolicyIndex, getPolicyIndex()
+        │   └── policyIndex.test.ts
         ├── hr/
         │   ├── dates.ts         # ISO date helpers (UTC), today() (APP_TODAY override)
         │   ├── leaveMath.ts     # pure deterministic calculations
@@ -79,7 +89,7 @@ HR bot/
 | `npm run chat` | CLI chat as E1001 (Asha). `npm run chat -- --as E1003` to be another seeded employee |
 | `npm run graph` | Print the agent graph as a Mermaid diagram (for README) |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | Unit tests (`node:test` via tsx): leave math + retry handler. No API calls |
+| `npm test` | Unit tests (`node:test` via tsx): leave math, retry handler, policy retrieval (17). No API calls |
 
 Code runs with `tsx` (TypeScript executed directly, no build step).
 
@@ -432,14 +442,80 @@ graph TD;
   lost the date cue). Fix: prompt rule "No year = next upcoming occurrence (a range may cross into next year); don't
   ask to confirm, state the dates". Re-test: answered directly (Dec 22 2026–Jan 2 2027, 7 working days), 2 model
   calls, 3556 in / 241 out.
-- Not re-run in Stage 3 (user chose to commit): sick-leave follow-up (checks trim node keeps enough context) and
-  Priya EL eligibility. Re-check these during Stage 4 testing.
+- User confirmed after commit: all Stage 3 cases pass, incl. sick-leave follow-up (trim node keeps enough context)
+  and Priya EL eligibility.
 
 ### How to test
 
 `npm run chat` → same questions as Stage 2 (Dec 22 – Jan 2; sick-leave follow-up; Dev Patel refusal) and
 `npm run chat -- --as E1003` → EL eligibility. Expect identical behaviour and similar token counts; LangSmith
 traces now show nodes `agent` / `tools` / `trim`.
+
+---
+
+## Stage 4 — Policy RAG (local keyword search)
+
+### What was built
+
+**Policy documents ([server/policies/](../server/policies/))** — synthetic "Acme Corp (fictional)" docs, each
+`# Title` + `## N. Section` with 1 short paragraph (short = fewer tokens per retrieved section):
+- **Leave Policy** (10): 1 Scope/leave year · 2 CL (12/yr, **max 3 consecutive working days**, not with EL, lapses)
+  · 3 SL (12/yr, **medical certificate if > 2 consecutive days**, apply within 2 days after return, carry 6, not
+  encashable) · 4 EL (18/yr, **after 6 months' service, ≥3 days need 7 days' notice**, carry 30) · 5 Encashment (EL
+  only, max 15/yr, in December) · 6 New joiners pro-rata (same rule as code) · 7 LOP · 8 Weekends/holidays not
+  counted · 9 Apply/approve/cancel (pending reserves balance) · 10 Maternity 26 weeks / paternity 5 days.
+- **Holiday Policy** (4): calendar per location (Pongal Chennai, Karnataka Rajyotsava Bengaluru) · weekend holidays
+  not substituted · comp-off within 30 days · 2 optional holidays/yr.
+- **Attendance and WFH Policy** (4): hours 9:30–18:30, core 11–16 · WFH ≤ 2 days/week · half-day CL/SL (EL full days)
+  · unplanned absence: tell manager by 10:00, apply within 2 days, else LOP.
+- Numbers match `leave_types` + `leaveMath.ts` (quotas, tenure, carry-forward, encashment 15, pro-rata rule).
+  Rules that only exist in prose (CL max 3 days, EL notice, SL certificate) are enforced by the LLM via RAG, not code.
+
+**Retriever ([server/src/rag/policyIndex.ts](../server/src/rag/policyIndex.ts))**
+- `parsePolicy(md)` → sections `{doc, section, text}`. `getPolicyIndex()` builds once from `policies/*.md`
+  (path via `import.meta.url`).
+- `tokenize`: lowercase, strip punctuation, stopwords (incl. "policy", "rule", "acme"), crude stem (plural -s/-ies;
+  for words > 6 chars strip -ment/-able/-ed/-ing → "encashment/encashed/encashable" = "encash"). Same on docs + queries.
+- **BM25** (k1 1.2, b 0.75); heading words counted twice. Query expansion via a small `SYNONYMS` map
+  (vacation→earned, wfh→work home, lop→loss pay, doctor→sick medical certificate, …) at **half weight**.
+- Filters (token saving + "don't guess"): a section must match ≥ 1 **distinctive** term (df ≤ N/3 — "leave" alone
+  doesn't count); keep hits ≥ 50% of best score; max 3.
+
+**Tool `search_policy({query})`** (first in `hrTools`, no identity needed) → `{results: [{source:
+"Leave Policy §4 Earned Leave (EL)", text}]}` or `{results: [], note: "No matching policy section."}`. ~70–220 tokens.
+
+**Prompt**: "can I take X to Y off?" → calculate_leave + search_policy for that leave type's rules, in parallel;
+policy answers only from search_policy results with citation "(Leave Policy §4)"; if results don't answer →
+"the policy documents don't cover it"; never guess policy. Removed "policy docs not connected".
+
+### Concepts introduced
+
+- **RAG**: retrieve relevant text, put only that in the model's context, answer from it with citations. Retrieval
+  quality = answer quality; the model can't cite what wasn't retrieved.
+- **Lexical (BM25) vs semantic (embeddings) retrieval**: BM25 scores shared words weighted by rarity (IDF) and
+  term frequency with length normalisation. No API, deterministic, testable; weaker on paraphrases (mitigated by
+  synonyms). Embeddings = future enhancement.
+- **Grounding / refusal**: returning *nothing* for weak matches is what lets the agent say "not covered".
+
+### Verified (no LLM)
+
+- `npm run typecheck`; `npm test` **17/17** (7 retrieval tests: parse, tokenize, 18 sections indexed, 6 questions →
+  correct top section, mixed "encash vacation" returns both §4 and §5, unrelated "pet insurance" + "bereavement
+  leave" → none, cap/threshold).
+- Spot checks: "what is LOP" → §7 only; "maternity leave" → §10 only; "leave" → none.
+- Size: system prompt ~255 tok, 7 tool schemas ~738 tok (was ~187/~637 with 6 tools).
+- User-tested live (2026-10-03): all 5 cases below pass, including the Saturday milestone.
+
+### How to test
+
+`npm run chat` (Asha):
+1. "How many earned leave days can I carry forward?" → 30, cites (Leave Policy §4)
+2. "Can I take 5 days casual leave next week?" → **combines policy + data**: balance ok (10 CL) but CL max 3
+   consecutive days (§2) → suggests EL. *(Plan milestone)*
+3. "Do I need a medical certificate for 3 days of sick leave?" → yes, > 2 days (§3)
+4. "What is the bereavement leave policy?" → policy documents don't cover it (no guessing)
+5. "Can I encash my earned leave?" → yes, max 15/yr in December (§5); optional follow-up "how many can I encash?" →
+   calculate_leave encashment = 15
 
 ---
 
@@ -468,6 +544,8 @@ traces now show nodes `agent` / `tools` / `trim`.
 | D20 | Graph state via `Annotation` (not Zod) | `MessagesZodState` lost the messages type under Zod v4 |
 | D21 | System prompt prepended per model call, not stored in state | Keeps saved history small; date always current |
 | D22 | History trimming moved into a `trim` graph node (RemoveMessage) | Works the same once a checkpointer stores state (Stage 6) |
+| D23 | Policy rules that only exist in prose (CL max 3 days, EL notice, SL certificate) are applied by the LLM via RAG, not coded | Shows policy + data reasoning; keeps code to quantitative rules |
+| D24 | Retriever returns nothing unless a distinctive word matches; max 3 hits ≥ 50% of best | Fewer tokens; enables honest "not covered" answers |
 | D19 | Stage 4 retrieval = local keyword (BM25-style) search, no embeddings (user choice, 2026-10-03) | Anthropic has no embeddings API; keyword search needs no API calls/tokens/second provider and suits a small set of well-headed policy docs. Vector search = future enhancement. CLAUDE.md stack updated |
 
 ## Open items / reminders

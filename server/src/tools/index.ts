@@ -20,6 +20,7 @@ import {
   tenureMonths,
 } from "../hr/leaveMath";
 import * as repo from "../hr/repo";
+import { getPolicyIndex } from "../rag/policyIndex";
 import type { AgentStateType } from "../agent/state";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
@@ -216,7 +217,28 @@ export const checkEligibility = tool(
   },
 );
 
+// RAG: the model sends a search query, we return the top policy sections with a citation label.
+// No identity needed — policies are the same for everyone.
+export const searchPolicy = tool(
+  async ({ query }) => {
+    const hits = getPolicyIndex().search(query);
+    if (hits.length === 0) return json({ results: [], note: "No matching policy section." });
+    return json({
+      results: hits.map((h) => ({
+        source: `${h.doc} §${h.section.replace(/^(\d+)\.\s*/, "$1 ")}`, // "Leave Policy §4 Earned Leave (EL)"
+        text: h.text,
+      })),
+    });
+  },
+  {
+    name: "search_policy",
+    description: "Keyword search over HR policy documents. Returns up to 3 sections with a source label to cite.",
+    schema: z.object({ query: z.string().describe("Keywords, e.g. 'earned leave carry forward'") }),
+  },
+);
+
 export const hrTools = [
+  searchPolicy,
   getEmployeeProfile,
   getLeaveBalance,
   getLeaveHistory,
