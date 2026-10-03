@@ -1,15 +1,16 @@
-// CLI chat. Stage 3: the LangGraph agent (src/agent/graph.ts) runs each turn.
+// CLI chat for development. The HTTP API (src/server) is the real entry point from Stage 5.
 //
 //   npm run chat                 -> chat as E1001 (Asha Rao)
 //   npm run chat -- --as E1003   -> chat as another seeded employee
 //   npm run graph                -> print the agent graph as a Mermaid diagram
 //
-// --as stands in for login until Stage 5 (JWT).
+// --as is a developer shortcut that skips login; the API takes the ID only from a verified JWT.
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { awaitAllCallbacks } from "@langchain/core/callbacks/promises";
-import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
+import type { BaseMessage } from "@langchain/core/messages";
 import { buildAgentGraph } from "./agent/graph";
+import { createTurnRunner } from "./agent/run";
 import { config } from "./config";
 import { getEmployee } from "./hr/repo";
 
@@ -42,42 +43,20 @@ async function main() {
   // Conversation so far (already trimmed by the graph). Stage 6 moves this into a checkpointer.
   let history: BaseMessage[] = [];
 
+  const runAgentTurn = createTurnRunner(graph);
+
   async function runTurn(text: string) {
-    let calls = 0;
-    let tokensIn = 0;
-    let tokensOut = 0;
-    let finalMessages: BaseMessage[] | undefined;
-
-    // "updates" = what each node just produced (for live logging);
-    // "values" = full state after each step (the last one is the new history).
-    const stream = await graph.stream(
-      { messages: [...history, new HumanMessage(text)], employeeId: employee!.id },
-      { streamMode: ["updates", "values"], recursionLimit: 20 },
+    const { reply, messages, usage } = await runAgentTurn(
+      { employeeId: employee!.id, history, message: text },
+      (e) =>
+        console.log(
+          dim(e.type === "tool_call" ? `  -> ${e.name}(${JSON.stringify(e.args)})` : `  <- ${e.content.slice(0, 160)}`),
+        ),
     );
-
-    for await (const [mode, chunk] of stream) {
-      if (mode === "values") {
-        finalMessages = chunk.messages;
-        continue;
-      }
-      for (const [node, update] of Object.entries(chunk)) {
-        const messages = ((update as { messages?: BaseMessage[] } | undefined)?.messages ?? []) as BaseMessage[];
-        for (const m of messages) {
-          if (node === "agent" && AIMessage.isInstance(m)) {
-            calls++;
-            tokensIn += m.usage_metadata?.input_tokens ?? 0;
-            tokensOut += m.usage_metadata?.output_tokens ?? 0;
-            for (const call of m.tool_calls ?? []) console.log(dim(`  -> ${call.name}(${JSON.stringify(call.args)})`));
-          }
-          if (node === "tools" && ToolMessage.isInstance(m)) console.log(dim(`  <- ${String(m.content).slice(0, 160)}`));
-        }
-      }
-    }
-
-    if (!finalMessages) throw new Error("Graph produced no state.");
-    history = finalMessages;
-    console.log(`\nbot> ${history.at(-1)?.text ?? ""}\n`);
-    console.log(dim(`  [${calls} model call${calls === 1 ? "" : "s"}, tokens: ${tokensIn} in / ${tokensOut} out]\n`));
+    history = messages;
+    const { modelCalls, inputTokens, outputTokens } = usage;
+    console.log(`\nbot> ${reply}\n`);
+    console.log(dim(`  [${modelCalls} model call${modelCalls === 1 ? "" : "s"}, tokens: ${inputTokens} in / ${outputTokens} out]\n`));
   }
 
   const rl = createInterface({ input, output });

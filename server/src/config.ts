@@ -46,6 +46,24 @@ export const config = {
     apiKey: () => required(API_KEY_VAR[provider]),
   },
 
+  server: {
+    port: Number(process.env.PORT ?? 3001),
+    // The React dev server (Stage 7). Only this origin may call the API from a browser.
+    corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
+    // Longest chat message accepted. Long inputs cost tokens on every later turn.
+    maxMessageChars: 1000,
+  },
+
+  auth: {
+    // HS256 signing key; at least 32 characters. Read lazily so the CLI doesn't need it.
+    jwtSecret: () => {
+      const secret = required("JWT_SECRET");
+      if (secret.length < 32) throw new Error("JWT_SECRET must be at least 32 characters.");
+      return secret;
+    },
+    tokenTtl: "8h",
+  },
+
   // LangChain picks up LANGSMITH_* env vars on its own; this is only for display.
   tracing: {
     enabled:

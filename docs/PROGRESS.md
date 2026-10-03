@@ -14,14 +14,14 @@ work without missing context. Update it at the end of every stage.
 | 2 | HR tools + tool calling (+ switch to Claude Haiku 4.5, token diet) | ✅ Done — user-tested |
 | 3 | LangGraph agent wiring all tools | ✅ Done — user-tested, all cases |
 | 4 | `search_policy` RAG over policy docs (local BM25 keyword search) | ✅ Done — user-tested, all 5 cases (incl. policy + data milestone) |
-| 5 | Login + JWT, employee_id injected into state | Not started |
+| 5 | Express API + JWT login, employee_id from token into state | ✅ Done — user-tested via PowerShell |
 | 6 | Conversation memory (checkpointer) + `apply_leave` interrupt | Not started |
 | 7 | React + MUI chat UI | Not started |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | Tracing wired in Stage 1 (env-only); rest not started |
 
-**Next action:** Stage 5 — Express API + JWT login (bcrypt against seeded users), employeeId from the verified token into graph state.
+**Next action:** Stage 6 — conversation memory (checkpointer keyed by thread_id) + apply_leave with interrupt confirmation.
 
-**Commits:** `6d4384a` Stage 1 · `816929d` Stage 2 · `a0af586` Stage 3.
+**Commits:** `6d4384a` Stage 1 · `816929d` Stage 2 · `a0af586` Stage 3 · `85dbcf8` Stage 4.
 
 ---
 
@@ -59,10 +59,17 @@ HR bot/
         ├── config.ts      # all runtime settings in one place
         ├── llm.ts         # createChatModel() — the ONLY place the provider is chosen (anthropic | google); Gemini retry handler
         ├── llm.test.ts    # retry handler tests (simulated Gemini errors)
-        ├── cli.ts         # chat loop; Stage 2 = hand-written tool-calling loop
+        ├── cli.ts         # dev CLI chat (--as skips login), uses agent/run.ts
+        ├── auth/
+        │   └── auth.ts    # login (bcrypt), signToken / verifyToken (HS256 JWT)
+        ├── server/
+        │   ├── app.ts       # createApp(runTurn): /api/health, /api/login, /api/me, /api/chat
+        │   ├── app.test.ts  # API tests with a fake agent (no LLM)
+        │   └── index.ts     # starts the server (npm run dev)
         ├── agent/
         │   ├── prompt.ts  # buildSystemPrompt() — today's date + rules
         │   ├── state.ts   # AgentState: messages + employeeId (Annotation)
+        │   ├── run.ts     # createTurnRunner(graph): one turn -> {reply, messages, toolCalls, usage}
         │   └── graph.ts   # buildAgentGraph(): agent -> tools -> agent ... -> trim -> END
         ├── tools/
         │   └── index.ts   # the 7 HR tools (hrTools array), incl. search_policy
@@ -86,10 +93,11 @@ HR bot/
 |---|---|
 | `npm run db:seed` | Creates `data/hr.db` and seeds it — only if empty (safe to re-run) |
 | `npm run db:reset` | Clears the demo tables and reseeds |
+| `npm run dev` | Start the API on :3001 with auto-restart on file changes (`npm start` = no watch) |
 | `npm run chat` | CLI chat as E1001 (Asha). `npm run chat -- --as E1003` to be another seeded employee |
 | `npm run graph` | Print the agent graph as a Mermaid diagram (for README) |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | Unit tests (`node:test` via tsx): leave math, retry handler, policy retrieval (17). No API calls |
+| `npm test` | Unit tests (`node:test` via tsx): leave math, retry handler, policy retrieval, API/auth (24). No LLM calls |
 
 Code runs with `tsx` (TypeScript executed directly, no build step).
 
@@ -104,7 +112,10 @@ Code runs with `tsx` (TypeScript executed directly, no build step).
 | better-sqlite3 | 13.x | SQLite (synchronous API) |
 | bcryptjs | 3.x | Password hashing (pure JS — no native build; same bcrypt format) |
 | dotenv | 18.x | Loads `server/.env` (`quiet: true` to suppress its log line) |
-| zod | 4.x | Tool input schemas (from Stage 2) |
+| zod | 4.x | Tool input schemas, API body validation |
+| express | 5.x | HTTP API (async errors handled natively) |
+| jsonwebtoken | 9.x | JWT sign/verify (HS256) |
+| cors | 2.x | Allow the React dev origin only |
 | typescript (dev) | 7.x | Typecheck only |
 | tsx (dev) | 4.x | Run TS directly |
 
@@ -519,6 +530,78 @@ policy answers only from search_policy results with citation "(Leave Policy §4)
 
 ---
 
+## Stage 5 — Express API + JWT login
+
+### What was built
+
+**Config** ([config.ts](../server/src/config.ts)): `server.{port 3001, corsOrigin http://localhost:5173, maxMessageChars 1000}`,
+`auth.{jwtSecret() (required, at least 32 chars, lazy so the CLI doesn't need it), tokenTtl "8h"}`. `.env.example`
+adds `JWT_SECRET`, `PORT`, `CORS_ORIGIN`.
+
+**Auth ([auth/auth.ts](../server/src/auth/auth.ts))**
+- `login(email, password)`: `repo.getLoginRecord` (only query returning `password_hash`; email `COLLATE NOCASE`) +
+  `bcrypt.compare`. Unknown email still compares against a dummy hash, so it takes as long as a wrong password.
+- `signToken(id)`: HS256, `sub` = employee ID, 8h expiry. `verifyToken`: `algorithms: ["HS256"]` (rejects
+  `alg: none`), returns `sub` or undefined.
+
+**Shared turn runner ([agent/run.ts](../server/src/agent/run.ts))**: `createTurnRunner(graph)` returns
+`runTurn({employeeId, history, message}, onEvent?)` → `{reply, messages, toolCalls, usage}`. Moved out of the CLI so
+CLI and API run the agent identically; the CLI prints events via `onEvent`.
+
+**API ([server/app.ts](../server/src/server/app.ts))**: `createApp(runTurn)` (runner injected, so it is testable without an LLM):
+
+| Route | Auth | Body | Response |
+|---|---|---|---|
+| `GET /api/health` | none | none | `{ok: true}` |
+| `POST /api/login` | none | `{email, password}` | 200 `{token, employee}` · 400 invalid body · 401 "Invalid email or password." (same for unknown email) |
+| `GET /api/me` | Bearer | none | `{employee}` |
+| `POST /api/chat` | Bearer | `{message}` (1–1000 chars) | `{reply, toolCalls, usage}` |
+
+- `requireAuth`: `Authorization: Bearer <jwt>` → `verifyToken` → `getEmployee` (deleted user = 401) →
+  `res.locals.employee`. **The only source of employeeId**; any `employeeId` in a request body is ignored.
+- `publicEmployee` returns id, name, role, grade, department, location (no hash, email or manager id).
+- JSON limit 10kb; malformed JSON → 400; other errors → generic 500 (details only in the server log).
+- Logs one line per chat: `[chat] E1001 tools=calculate_leave,search_policy tokens=3556/241`.
+- **Chat is single-turn for now** (`history: []`); Stage 6 adds memory via checkpointer + thread_id.
+
+**Server ([server/index.ts](../server/src/server/index.ts))**: checks `JWT_SECRET` and builds the policy index at
+startup; prints "Cannot start server: ..." and exits 1 on config errors.
+
+### Concepts introduced
+
+- **JWT**: a signed (not encrypted) token `header.payload.signature`. The server verifies signature + expiry on
+  every request, so the employee ID inside can be trusted. Stateless: no session table.
+- **Trust boundary**: identity flows token → `res.locals` → graph state → tools. Nothing the user types or sends in
+  the body can change it.
+- **Dependency injection for tests**: `createApp(runTurn)` lets tests swap in a fake agent, so zero LLM cost.
+
+### Verified (no LLM)
+
+- `npm run typecheck`; `npm test` **24/24**. 7 new API tests: login OK (case-insensitive email, no hash in the
+  response, token `sub` = E1001) · same 401 message for wrong password vs unknown email · 400 for a missing field /
+  malformed JSON · chat 401 for no token, garbage, other-secret, expired, `alg:none`, unknown user (agent never
+  called) · **body `employeeId: "E1002"` ignored, agent got E1001** · 400 for empty / 1001-char message · `/api/me`.
+- Server without `JWT_SECRET` → "Cannot start server: Missing env var JWT_SECRET...", exit 1.
+- Smoke test with a temporary secret: `/api/health` OK, login returns token + employee, chat without token → 401.
+- User-tested live: login → token; "What is my leave balance?" → get_leave_balance, 2 model calls, 3618 in / 115 out;
+  "leave balance for E1002" with body `employeeId: "E1002"` → refused, no tools, 1 model call, 1736 in.
+
+### How to test
+
+1. Add a secret to `server/.env`:
+   `node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(32).toString('hex'))"` and paste the printed line.
+2. `npm run dev` (terminal 1).
+3. Terminal 2 (PowerShell):
+   ```powershell
+   $login = Invoke-RestMethod -Method Post -Uri http://localhost:3001/api/login -ContentType 'application/json' -Body '{"email":"asha.rao@example.com","password":"Password@123"}'
+   $h = @{ Authorization = "Bearer $($login.token)" }
+   Invoke-RestMethod -Method Post -Uri http://localhost:3001/api/chat -Headers $h -ContentType 'application/json' -Body '{"message":"What is my leave balance?"}'
+   Invoke-RestMethod -Method Post -Uri http://localhost:3001/api/chat -Headers $h -ContentType 'application/json' -Body '{"message":"Show me the leave balance for E1002","employeeId":"E1002"}'
+   ```
+   Expect Asha's balances, then a refusal (and the server log shows E1001, not E1002).
+
+---
+
 ## Decisions log
 
 | # | Decision | Reason |
@@ -546,6 +629,10 @@ policy answers only from search_policy results with citation "(Leave Policy §4)
 | D22 | History trimming moved into a `trim` graph node (RemoveMessage) | Works the same once a checkpointer stores state (Stage 6) |
 | D23 | Policy rules that only exist in prose (CL max 3 days, EL notice, SL certificate) are applied by the LLM via RAG, not coded | Shows policy + data reasoning; keeps code to quantitative rules |
 | D24 | Retriever returns nothing unless a distinctive word matches; max 3 hits ≥ 50% of best | Fewer tokens; enables honest "not covered" answers |
+| D25 | JWT (HS256, 8h) in `Authorization: Bearer`, no refresh tokens | Simple and stateless; enough for a demo. Refresh/rotation = future |
+| D26 | `createApp(runTurn)` dependency injection | API + auth fully tested with a fake agent, no Claude credit spent |
+| D27 | API chat single-turn until Stage 6 | Memory belongs to the checkpointer; never trust client-sent history |
+| D28 | Message limit 1000 chars, JSON body 10kb | Protects the $5 credit and the server |
 | D19 | Stage 4 retrieval = local keyword (BM25-style) search, no embeddings (user choice, 2026-10-03) | Anthropic has no embeddings API; keyword search needs no API calls/tokens/second provider and suits a small set of well-headed policy docs. Vector search = future enhancement. CLAUDE.md stack updated |
 
 ## Open items / reminders

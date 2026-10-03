@@ -59,6 +59,13 @@ export function getEmployee(employeeId: string): Employee | undefined {
     .get(employeeId) as Employee | undefined;
 }
 
+// Only for login: the one query that returns the password hash.
+export function getLoginRecord(email: string): { id: string; password_hash: string } | undefined {
+  return getDb()
+    .prepare(`SELECT id, password_hash FROM employees WHERE email = ? COLLATE NOCASE`)
+    .get(email) as { id: string; password_hash: string } | undefined;
+}
+
 export function getLeaveType(code: LeaveCode): LeaveType | undefined {
   return getDb().prepare(`SELECT * FROM leave_types WHERE code = ?`).get(code) as LeaveType | undefined;
 }
