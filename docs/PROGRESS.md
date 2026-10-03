@@ -17,9 +17,11 @@ work without missing context. Update it at the end of every stage.
 | 5 | Express API + JWT login, employee_id from token into state | ✅ Done — user-tested via PowerShell |
 | 6 | Conversation memory (checkpointer) + `apply_leave` interrupt | ✅ Done — user-tested (approve, duplicate blocked, cancel) |
 | 7 | React + MUI chat UI (+ root `npm run dev` for API + UI) | ✅ Done — user-tested in browser |
-| 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | README + demo script done; push + recording pending |
+| 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | README + demo script done; pushed to GitHub; demo recording + submission pending |
 
-**Next action:** user confirms GitHub account + repo name → create public repo and push → user records demo with docs/DEMO_SCRIPT.md (`npm run db:reset` first) → submit.
+**Next action:** record the demo with docs/DEMO_SCRIPT.md (`npm run db:reset` first) → submit video + repo link + README.
+
+**Repository:** https://github.com/Muthukumar-ramasamy/HR-Chat-Agent (public, branch `main`).
 
 **Commits:** `6d4384a` Stage 1 · `816929d` Stage 2 · `a0af586` Stage 3 · `85dbcf8` Stage 4 · `5f9d4c6` Stage 5 · `83bffa1` Stage 6 · `73d04de` Stage 7.
 
@@ -778,7 +780,10 @@ Then `npm run db:reset` (server) to remove test requests.
   covered" and CL-limit extras), timings, what to point out, LangSmith trace moment, ~$0.05 per run.
 - Root `package.json` `engines: node >= 22.12` (Vite needs ^20.19 || ≥ 22.12; better-sqlite3 13 needs ≥ 22).
 - Full-history secret scan (all commits): no API keys / JWT secrets / .env / .db ever committed.
-- Pending: public GitHub repo + push (needs user's account + repo name), demo recording, submission.
+- Pushed to https://github.com/Muthukumar-ramasamy/HR-Chat-Agent (public). The GitHub repo had an auto-generated
+  README commit; merged it with `--allow-unrelated-histories` keeping the project README (no force push). Local
+  branch renamed `master` → `main`. Final scan before push: no secrets, no .env/.db/node_modules in any commit.
+- Pending: demo recording, submission.
 
 ---
 
