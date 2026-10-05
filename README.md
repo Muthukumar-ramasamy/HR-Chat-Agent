@@ -11,6 +11,8 @@ user to confirm before it writes anything.
 **Stack:** TypeScript end to end · LangGraph.js · LangChain (Anthropic) · Express · SQLite (better-sqlite3) ·
 React 19 + MUI · Vite · LangSmith tracing
 
+📄 **Architecture & design document (PDF):** [docs/HR-Assist-Architecture.pdf](docs/HR-Assist-Architecture.pdf)
+
 ---
 
 ## What it can do
