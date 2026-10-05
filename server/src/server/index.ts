@@ -10,9 +10,17 @@ try {
   getPolicyIndex(); // build the policy search index at startup, not on the first question
 
   const app = createApp(createTurnRunner(buildAgentGraph()));
-  app.listen(config.server.port, () => {
+  const server = app.listen(config.server.port, () => {
     console.log(`HR Assist API on http://localhost:${config.server.port} (${config.llm.provider}/${config.llm.model})`);
     console.log(`LangSmith tracing: ${config.tracing.enabled ? `ON (project "${config.tracing.project}")` : "off"}`);
+  });
+  // An older API still holding the port would keep answering with stale code: stop loudly instead.
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`Cannot start server: port ${config.server.port} is already in use (an older API may still be running).`);
+      process.exit(1);
+    }
+    throw err;
   });
 } catch (err) {
   console.error(`Cannot start server: ${(err as Error).message}`);

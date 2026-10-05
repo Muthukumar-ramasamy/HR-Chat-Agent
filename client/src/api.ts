@@ -32,7 +32,20 @@ export interface CancelConfirmation {
   status: string;
 }
 
-export type Confirmation = LeaveConfirmation | CancelConfirmation;
+export interface DecisionConfirmation {
+  type: "confirm_decision";
+  decision: "approve" | "reject";
+  request_id: number;
+  employee_name: string;
+  leave_type: string;
+  leave_name: string;
+  start_date: string;
+  end_date: string;
+  working_days: number;
+  reason: string | null;
+}
+
+export type Confirmation = LeaveConfirmation | CancelConfirmation | DecisionConfirmation;
 
 export interface ChatResponse {
   threadId: string;

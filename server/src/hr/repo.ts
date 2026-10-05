@@ -1,5 +1,5 @@
-// Queries over the HR database. The only writes are createLeaveRequest and cancelLeaveRequest,
-// both called after the user confirms.
+// Queries over the HR database. The only writes are createLeaveRequest, cancelLeaveRequest and
+// decideLeaveRequest, all called after the user confirms.
 import { getDb } from "../db";
 import type { Holiday } from "./leaveMath";
 
@@ -160,5 +160,66 @@ export function cancelLeaveRequest(employeeId: string, requestId: number): boole
         WHERE id = ? AND employee_id = ? AND status IN ('pending', 'approved')`,
     )
     .run(requestId, employeeId);
+  return result.changes === 1;
+}
+
+// ---- Manager queries. Every one is scoped to the manager's direct reports in SQL. ----
+
+export interface TeamLeaveRequest extends LeaveRequest {
+  employee_id: string;
+  employee_name: string;
+}
+
+const TEAM_REQUEST_COLUMNS = `r.id, r.employee_id, e.name AS employee_name, r.leave_type, r.start_date, r.end_date,
+       r.days, r.reason, r.status, r.applied_on`;
+
+export function getDirectReports(managerId: string): { id: string; name: string; location: string }[] {
+  return getDb()
+    .prepare(`SELECT id, name, location FROM employees WHERE manager_id = ? ORDER BY name`)
+    .all(managerId) as { id: string; name: string; location: string }[];
+}
+
+export function getTeamRequests(managerId: string, from: string, to: string, statuses: string[]): TeamLeaveRequest[] {
+  return getDb()
+    .prepare(
+      `SELECT ${TEAM_REQUEST_COLUMNS}
+         FROM leave_requests r JOIN employees e ON e.id = r.employee_id
+        WHERE e.manager_id = ? AND r.start_date <= ? AND r.end_date >= ?
+          AND r.status IN (SELECT value FROM json_each(?))
+        ORDER BY r.start_date`,
+    )
+    .all(managerId, to, from, JSON.stringify(statuses)) as TeamLeaveRequest[];
+}
+
+export function getPendingTeamRequests(managerId: string): TeamLeaveRequest[] {
+  return getDb()
+    .prepare(
+      `SELECT ${TEAM_REQUEST_COLUMNS}
+         FROM leave_requests r JOIN employees e ON e.id = r.employee_id
+        WHERE e.manager_id = ? AND r.status = 'pending'
+        ORDER BY r.start_date`,
+    )
+    .all(managerId) as TeamLeaveRequest[];
+}
+
+export function getTeamRequest(managerId: string, requestId: number): TeamLeaveRequest | undefined {
+  return getDb()
+    .prepare(
+      `SELECT ${TEAM_REQUEST_COLUMNS}
+         FROM leave_requests r JOIN employees e ON e.id = r.employee_id
+        WHERE e.manager_id = ? AND r.id = ?`,
+    )
+    .get(managerId, requestId) as TeamLeaveRequest | undefined;
+}
+
+// Called only after the manager confirms (decide_leave_request). Returns false if nothing changed.
+export function decideLeaveRequest(managerId: string, requestId: number, status: "approved" | "rejected"): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE leave_requests SET status = ?
+        WHERE id = ? AND status = 'pending'
+          AND employee_id IN (SELECT id FROM employees WHERE manager_id = ?)`,
+    )
+    .run(status, requestId, managerId);
   return result.changes === 1;
 }

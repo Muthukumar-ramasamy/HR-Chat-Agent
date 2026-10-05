@@ -7,9 +7,11 @@
 //
 // SECURITY: no tool accepts an employee ID. The ID comes from graph state
 // (runtime.state.employeeId), which only our code sets — from the verified login.
-import { tool, type ToolRuntime } from "@langchain/core/tools";
+import { tool } from "@langchain/core/tools";
 import { interrupt } from "@langchain/langgraph";
 import { z } from "zod";
+import { ConfirmDecision, currentEmployee, currentYear, isoDate, json, leaveType, type Runtime } from "./common";
+import type { DecisionConfirmation } from "./manager";
 import {
   validateCancellation,
   validateLeaveRequest,
@@ -28,29 +30,12 @@ import {
 } from "../hr/leaveMath";
 import * as repo from "../hr/repo";
 import { getPolicyIndex } from "../rag/policyIndex";
-import type { AgentStateType } from "../agent/state";
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
-const leaveType = z.enum(["CL", "SL", "EL"]); // meanings are in the system prompt
-
-type Runtime = ToolRuntime<AgentStateType>;
-
-// What the app shows when apply_leave pauses, and the answer it resumes with.
+// What the app shows when a write tool pauses the graph (interrupt).
 export type LeaveConfirmation = { type: "confirm_leave"; reason: string | null } & LeaveRequestSummary;
 export type CancelConfirmation = { type: "confirm_cancel" } & CancellationSummary;
-export type Confirmation = LeaveConfirmation | CancelConfirmation;
-export const ConfirmDecision = z.object({ approved: z.boolean() });
-
-function currentEmployee(runtime: Runtime): repo.Employee {
-  const id = runtime?.state?.employeeId;
-  if (typeof id !== "string" || !id) throw new Error("No authenticated employee in this session.");
-  const employee = repo.getEmployee(id);
-  if (!employee) throw new Error("Authenticated employee not found.");
-  return employee;
-}
-
-const currentYear = () => Number(today().slice(0, 4));
-const json = (value: unknown) => JSON.stringify(value);
+export type Confirmation = LeaveConfirmation | CancelConfirmation | DecisionConfirmation;
+export { managerTools } from "./manager";
 
 export const getEmployeeProfile = tool(
   async (_input, runtime: Runtime) => {

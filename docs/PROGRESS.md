@@ -19,7 +19,7 @@ work without missing context. Update it at the end of every stage.
 | 7 | React + MUI chat UI (+ root `npm run dev` for API + UI) | ✅ Done — user-tested in browser |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | README + demo script done; pushed to GitHub; demo recording + submission pending |
 
-**Next action:** Enhancement 2 (manager role): team leave view + approve/reject with confirmation. Then eval set → login rate limit → (streaming). Regenerate README/PDF at the end.
+**Next action:** Enhancement 3 (evaluation set) → login rate limit → (streaming). Regenerate README/PDF at the end.
 
 **Repository:** https://github.com/Muthukumar-ramasamy/HR-Chat-Agent (public, branch `main`).
 
@@ -818,6 +818,41 @@ Then `npm run db:reset` (server) to remove test requests.
 - Tests: 38/38 (+1 validation: own/future/pending only, other user's #5 and unknown #999 not found, past request
   already started; +1 graph: pause → nothing changed → approve → status cancelled → CL available +1 → second cancel
   returns a problem without confirmation).
+
+---
+
+## Enhancement 2 — Manager role
+
+- **Shared helpers** moved to [tools/common.ts](../server/src/tools/common.ts) (isoDate, leaveType, Runtime, ConfirmDecision,
+  currentEmployee, currentYear, json); employee tools stay in tools/index.ts, manager tools in
+  [tools/manager.ts](../server/src/tools/manager.ts).
+- **Repo (scoped in SQL to direct reports)**: getDirectReports, getTeamRequests(manager, from, to, statuses) (json_each for
+  the status list), getPendingTeamRequests, getTeamRequest(manager, id), decideLeaveRequest(manager, id, approved|rejected)
+  (UPDATE only if pending and the employee reports to this manager; third write in the app).
+- **Tools** (each calls `currentManager()` → throws "Only managers can use team tools." for employees):
+  - `get_team_leave({from_date?, to_date?})` → team names + compact lines "#4 Asha Rao CL 2026-10-16..2026-10-16 1d pending"
+    (approved + pending; default today → +1 month).
+  - `get_pending_approvals()` → pending lines with applied date and reason.
+  - `decide_leave_request({request_id, decision: approve|reject})` → not in team / not pending → problems; else
+    `interrupt({type: "confirm_decision", decision, request_id, employee_name, leave..., reason})` → on approval update status.
+- **Role-based binding** (graph agent node): looks up the role from state.employeeId each call; employees get `hrTools`,
+  managers `hrTools + managerTools`. ToolNode knows all tools; tools re-check the role (defence in depth).
+- **Prompt**: `buildSystemPrompt(role)`; managers get one extra rule block and "(except direct reports' leave via the team
+  tools)" in the refusal line. Token impact: employee ~423 + 9 tools ~1041 (unchanged by this feature); manager ~486 + 12
+  tools ~1362 (~+380).
+- **Confirmation union** += DecisionConfirmation (runner, CLI "Approve it? (y/n)", client card: green Approve / red
+  Reject, "Not now").
+- **UI**: suggestions per role (manager: pending approvals, team leave next month, own balance).
+- **User-tested in the browser as Ravi**: pending approvals → approve with confirmation card → team leave view.
+- **Dev-server robustness** (found while testing): on Windows, Ctrl+C sometimes left the API running, so a stale API
+  (started two days earlier) kept answering with old code. Fixes: (1) server exits with "port 3001 is already in use"
+  on EADDRINUSE instead of failing silently; (2) root `predev` / `predev:watch` run
+  [scripts/free-ports.cjs](../scripts/free-ports.cjs), which stops leftover processes on 3001/5173 **only if their command
+  line points into this project** (other programs are reported, not touched). Verified: leftover PID stopped, `npm run
+  dev` starts both, nothing left after stop.
+- **Tests 42/42** (+4 graph): manager approves Dev's new request after confirmation (name in card, pending until confirmed);
+  rejects Priya's; own request #7 and already-approved #1 → no confirmation, unchanged; employee session calling
+  decide_leave_request → tool refuses, unchanged; team queries contain only direct reports, own request not a team request.
 
 ---
 

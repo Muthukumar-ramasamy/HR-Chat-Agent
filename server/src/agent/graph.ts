@@ -13,7 +13,8 @@ import { AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage } fr
 import { END, MemorySaver, START, StateGraph, type BaseCheckpointSaver } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { createChatModel } from "../llm";
-import { hrTools } from "../tools";
+import { getEmployee } from "../hr/repo";
+import { hrTools, managerTools } from "../tools";
 import { buildSystemPrompt } from "./prompt";
 import { AgentState, type AgentStateType } from "./state";
 
@@ -26,12 +27,17 @@ export function buildAgentGraph({
   checkpointer = new MemorySaver(),
 }: { model?: BaseChatModel; checkpointer?: BaseCheckpointSaver } = {}) {
   if (!model.bindTools) throw new Error("This model does not support tool calling.");
-  const modelWithTools = model.bindTools(hrTools);
+  // Role-based tool sets: managers also get the team tools. ToolNode knows all tools, and each
+  // manager tool re-checks the role, so an employee session can never use them.
+  const employeeModel = model.bindTools(hrTools);
+  const managerModel = model.bindTools([...hrTools, ...managerTools]);
 
   // The system prompt is added per call instead of being stored in state:
   // it stays out of saved history and always has today's date.
   async function agent(state: AgentStateType) {
-    const reply = await modelWithTools.invoke([new SystemMessage(buildSystemPrompt()), ...state.messages]);
+    const role = getEmployee(state.employeeId)?.role ?? "employee";
+    const modelWithTools = role === "manager" ? managerModel : employeeModel;
+    const reply = await modelWithTools.invoke([new SystemMessage(buildSystemPrompt(role)), ...state.messages]);
     return { messages: [reply] };
   }
 
@@ -56,7 +62,7 @@ export function buildAgentGraph({
 
   return new StateGraph(AgentState)
     .addNode("agent", agent)
-    .addNode("tools", new ToolNode(hrTools))
+    .addNode("tools", new ToolNode([...hrTools, ...managerTools]))
     .addNode("trim", trim)
     .addEdge(START, "agent")
     .addConditionalEdges("agent", routeAfterAgent, ["tools", "trim"])

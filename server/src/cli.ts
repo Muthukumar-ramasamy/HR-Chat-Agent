@@ -70,12 +70,14 @@ async function main() {
     while (result.confirmation) {
       const c = result.confirmation;
       const period = `${c.leave_name} ${c.start_date} to ${c.end_date}, ${c.working_days} working day(s)`;
-      console.log(
+      const [summary, question] =
         c.type === "confirm_leave"
-          ? `\n  Confirm leave request: ${period}, balance ${c.balance_before} -> ${c.balance_after}${c.reason ? `, reason "${c.reason}"` : ""}`
-          : `\n  Confirm cancellation of request #${c.request_id} (${c.status}): ${period}`,
-      );
-      ask(c.type === "confirm_leave" ? "  Submit? (y/n) " : "  Cancel this request? (y/n) ");
+          ? [`Confirm leave request: ${period}, balance ${c.balance_before} -> ${c.balance_after}${c.reason ? `, reason "${c.reason}"` : ""}`, "Submit?"]
+          : c.type === "confirm_cancel"
+            ? [`Confirm cancellation of request #${c.request_id} (${c.status}): ${period}`, "Cancel this request?"]
+            : [`Confirm: ${c.decision} request #${c.request_id} from ${c.employee_name}: ${period}`, `${c.decision === "approve" ? "Approve" : "Reject"} it?`];
+      console.log(`\n  ${summary}`);
+      ask(`  ${question} (y/n) `);
       const approved = (await nextLine())?.toLowerCase().startsWith("y") ?? false;
       result = await runner.run({ employeeId: employee!.id, threadId, resume: { approved } }, logEvent);
       modelCalls += result.usage.modelCalls;

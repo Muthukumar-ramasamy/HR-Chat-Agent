@@ -150,3 +150,57 @@ test("cancel_leave pauses for confirmation, then cancels and frees the balance",
   const again = await runner.run({ employeeId: asha, threadId: "t-cancel-again", message: "Cancel #4" });
   assert.equal(again.confirmation, undefined);
 });
+
+const ravi = "E1000"; // manager of E1001-E1003
+const newPendingRequest = (employeeId: string, start: string) =>
+  repo.createLeaveRequest({ employeeId, leaveType: "CL", startDate: start, endDate: start, days: 1, reason: null, appliedOn: "2026-10-05" });
+const statusOf = (id: number) => (getDb().prepare(`SELECT status FROM leave_requests WHERE id = ?`).get(id) as { status: string }).status;
+
+test("manager approves a direct report's request after confirmation", async () => {
+  const id = newPendingRequest("E1002", "2026-11-12");
+  model.script.push(callTool("decide_leave_request", { request_id: id, decision: "approve" }));
+  const paused = await runner.run({ employeeId: ravi, threadId: "t-approve-team", message: `Approve #${id}` });
+  assert.equal(paused.confirmation?.type, "confirm_decision");
+  assert.ok(paused.confirmation?.type === "confirm_decision" && paused.confirmation.employee_name === "Dev Patel");
+  assert.equal(statusOf(id), "pending", "nothing changed before confirmation");
+
+  model.script.push(say("Approved."));
+  await runner.run({ employeeId: ravi, threadId: "t-approve-team", resume: { approved: true } });
+  assert.equal(statusOf(id), "approved");
+});
+
+test("manager rejects; cannot decide own or non-pending requests", async () => {
+  const id = newPendingRequest("E1003", "2026-11-13");
+  model.script.push(callTool("decide_leave_request", { request_id: id, decision: "reject" }));
+  await runner.run({ employeeId: ravi, threadId: "t-reject-team", message: `Reject #${id}` });
+  model.script.push(say("Rejected."));
+  await runner.run({ employeeId: ravi, threadId: "t-reject-team", resume: { approved: true } });
+  assert.equal(statusOf(id), "rejected");
+
+  // #7 is Ravi's own request (he has no manager), #1 is already approved: no confirmation offered.
+  for (const requestId of [7, 1]) {
+    model.script.push(callTool("decide_leave_request", { request_id: requestId, decision: "approve" }));
+    model.script.push(say("Can't do that."));
+    const r = await runner.run({ employeeId: ravi, threadId: `t-not-allowed-${requestId}`, message: `Approve #${requestId}` });
+    assert.equal(r.confirmation, undefined);
+  }
+  assert.equal(statusOf(7), "approved");
+});
+
+test("employees cannot use manager tools, even if the model calls them", async () => {
+  const id = newPendingRequest("E1002", "2026-11-16");
+  model.script.push(callTool("decide_leave_request", { request_id: id, decision: "approve" }));
+  model.script.push(say("Only managers can approve."));
+  const r = await runner.run({ employeeId: asha, threadId: "t-employee-manager-tool", message: `Approve #${id}` });
+  assert.equal(r.confirmation, undefined);
+  assert.equal(statusOf(id), "pending");
+});
+
+test("team queries only include direct reports", () => {
+  const names = repo.getDirectReports(ravi).map((r) => r.name);
+  assert.deepEqual(names, ["Asha Rao", "Dev Patel", "Priya Nair"]);
+  assert.deepEqual(repo.getDirectReports(asha), []);
+  const team = repo.getTeamRequests(ravi, "2026-01-01", "2026-12-31", ["approved", "pending"]);
+  assert.ok(team.length > 0 && team.every((r) => ["E1001", "E1002", "E1003"].includes(r.employee_id)));
+  assert.equal(repo.getTeamRequest(ravi, 7), undefined, "manager's own request is not a team request");
+});

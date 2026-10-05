@@ -26,12 +26,26 @@ type Message =
   | { role: "error"; text: string };
 
 // Starter questions that walk through the demo script.
-const SUGGESTIONS = [
-  "What's my leave balance?",
-  "Can I take Dec 22 to Jan 2 off?",
-  "How many earned leave days can I carry forward?",
-  "Apply for earned leave from Dec 22 to Jan 2",
-];
+const SUGGESTIONS = {
+  employee: [
+    "What's my leave balance?",
+    "Can I take Dec 22 to Jan 2 off?",
+    "How many earned leave days can I carry forward?",
+    "Apply for earned leave from Dec 22 to Jan 2",
+  ],
+  manager: [
+    "Any leave requests waiting for my approval?",
+    "Who on my team is on leave in the next month?",
+    "What's my leave balance?",
+  ],
+};
+
+// The user's line shown after they answer a confirmation card.
+const DECISION_TEXT: Record<Confirmation["type"], [string, string]> = {
+  confirm_leave: ["Submit the request", "Don't submit"],
+  confirm_cancel: ["Cancel the request", "Keep the request"],
+  confirm_decision: ["Confirm", "Not now"],
+};
 
 const formatTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
@@ -77,8 +91,7 @@ export default function ChatPage({ session, onLogout }: { session: Session; onLo
   function decide(approved: boolean) {
     if (!threadId) return;
     setPending(undefined);
-    const isCancel = pending?.type === "confirm_cancel";
-    add({ role: "user", text: isCancel ? (approved ? "Cancel the request" : "Keep the request") : approved ? "Submit the request" : "Don't submit" });
+    if (pending) add({ role: "user", text: DECISION_TEXT[pending.type][approved ? 0 : 1] });
     void call(() => confirmLeave(session.token, threadId, approved));
   }
 
@@ -126,7 +139,7 @@ export default function ChatPage({ session, onLogout }: { session: Session; onLo
                 Ask about your leave, holidays or HR policy. Try one of these:
               </Typography>
               <Stack direction="row" useFlexGap spacing={1} sx={{ justifyContent: "center", flexWrap: "wrap" }}>
-                {SUGGESTIONS.map((s) => (
+                {SUGGESTIONS[employee.role].map((s) => (
                   <Chip key={s} label={s} variant="outlined" onClick={() => send(s)} />
                 ))}
               </Stack>
