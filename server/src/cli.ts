@@ -66,15 +66,16 @@ async function main() {
     let result = await runner.run({ employeeId: employee!.id, threadId, message: text }, logEvent);
     let { modelCalls, inputTokens, outputTokens } = result.usage;
 
-    // apply_leave paused the graph: show the summary, ask, and resume with the answer.
+    // apply_leave / cancel_leave paused the graph: show the summary, ask, and resume with the answer.
     while (result.confirmation) {
       const c = result.confirmation;
+      const period = `${c.leave_name} ${c.start_date} to ${c.end_date}, ${c.working_days} working day(s)`;
       console.log(
-        `
-  Confirm leave request: ${c.leave_name} ${c.start_date} to ${c.end_date}, ${c.working_days} working day(s), ` +
-          `balance ${c.balance_before} -> ${c.balance_after}${c.reason ? `, reason "${c.reason}"` : ""}`,
+        c.type === "confirm_leave"
+          ? `\n  Confirm leave request: ${period}, balance ${c.balance_before} -> ${c.balance_after}${c.reason ? `, reason "${c.reason}"` : ""}`
+          : `\n  Confirm cancellation of request #${c.request_id} (${c.status}): ${period}`,
       );
-      ask("  Submit? (y/n) ");
+      ask(c.type === "confirm_leave" ? "  Submit? (y/n) " : "  Cancel this request? (y/n) ");
       const approved = (await nextLine())?.toLowerCase().startsWith("y") ?? false;
       result = await runner.run({ employeeId: employee!.id, threadId, resume: { approved } }, logEvent);
       modelCalls += result.usage.modelCalls;

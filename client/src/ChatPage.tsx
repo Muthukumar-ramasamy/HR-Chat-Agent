@@ -16,7 +16,7 @@ import Typography from "@mui/material/Typography";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ApiError, confirmLeave, sendMessage, type ChatResponse, type LeaveConfirmation } from "./api";
+import { ApiError, confirmLeave, sendMessage, type ChatResponse, type Confirmation } from "./api";
 import type { Session } from "./App";
 import ConfirmLeaveCard from "./ConfirmLeaveCard";
 
@@ -38,7 +38,7 @@ const formatTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : S
 export default function ChatPage({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [threadId, setThreadId] = useState<string>();
-  const [pending, setPending] = useState<LeaveConfirmation>();
+  const [pending, setPending] = useState<Confirmation>();
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -77,7 +77,8 @@ export default function ChatPage({ session, onLogout }: { session: Session; onLo
   function decide(approved: boolean) {
     if (!threadId) return;
     setPending(undefined);
-    add({ role: "user", text: approved ? "Submit the request" : "Cancel the request" });
+    const isCancel = pending?.type === "confirm_cancel";
+    add({ role: "user", text: isCancel ? (approved ? "Cancel the request" : "Keep the request") : approved ? "Submit the request" : "Don't submit" });
     void call(() => confirmLeave(session.token, threadId, approved));
   }
 
@@ -162,7 +163,7 @@ export default function ChatPage({ session, onLogout }: { session: Session; onLo
             multiline
             maxRows={4}
             size="small"
-            placeholder={pending ? "Submit or cancel the leave request above first" : "Ask about leave, holidays or policy…"}
+            placeholder={pending ? "Answer the confirmation above first" : "Ask about leave, holidays or policy…"}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {

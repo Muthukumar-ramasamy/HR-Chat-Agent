@@ -10,7 +10,12 @@
 import { tool, type ToolRuntime } from "@langchain/core/tools";
 import { interrupt } from "@langchain/langgraph";
 import { z } from "zod";
-import { validateLeaveRequest, type LeaveRequestSummary } from "../hr/leaveRequest";
+import {
+  validateCancellation,
+  validateLeaveRequest,
+  type CancellationSummary,
+  type LeaveRequestSummary,
+} from "../hr/leaveRequest";
 import { today } from "../hr/dates";
 import {
   countWorkingDays,
@@ -32,6 +37,8 @@ type Runtime = ToolRuntime<AgentStateType>;
 
 // What the app shows when apply_leave pauses, and the answer it resumes with.
 export type LeaveConfirmation = { type: "confirm_leave"; reason: string | null } & LeaveRequestSummary;
+export type CancelConfirmation = { type: "confirm_cancel" } & CancellationSummary;
+export type Confirmation = LeaveConfirmation | CancelConfirmation;
 export const ConfirmDecision = z.object({ approved: z.boolean() });
 
 function currentEmployee(runtime: Runtime): repo.Employee {
@@ -290,8 +297,35 @@ export const applyLeave = tool(
   },
 );
 
+// Same human-in-the-loop pattern as apply_leave: validate, interrupt, write only on approval.
+export const cancelLeave = tool(
+  async ({ request_id }, runtime: Runtime) => {
+    const e = currentEmployee(runtime);
+    const check = validateCancellation(e, request_id);
+    if (!check.ok) return json({ cancelled: false, problems: check.problems });
+
+    const confirmation: CancelConfirmation = { type: "confirm_cancel", ...check.summary };
+    const decision = interrupt(confirmation, { responseSchema: ConfirmDecision });
+    if (!decision.approved) return json({ cancelled: false, note: "User kept the request; nothing changed." });
+
+    if (!repo.cancelLeaveRequest(e.id, request_id)) {
+      return json({ cancelled: false, problems: ["The request changed meanwhile; nothing was cancelled."] });
+    }
+    const available = repo.getLeaveBalances(e.id, currentYear(), check.summary.leave_type)[0]?.available ?? 0;
+    return json({ cancelled: true, request_id, leave_type: check.summary.leave_type, available_now: available });
+  },
+  {
+    name: "cancel_leave",
+    description:
+      "Cancel one of the user's pending or approved leave requests that hasn't started. Get request_id from " +
+      "get_leave_history. The app asks the user to confirm, so call it directly.",
+    schema: z.object({ request_id: z.number().int() }),
+  },
+);
+
 export const hrTools = [
   applyLeave,
+  cancelLeave,
   searchPolicy,
   getEmployeeProfile,
   getLeaveBalance,

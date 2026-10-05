@@ -19,7 +19,7 @@ work without missing context. Update it at the end of every stage.
 | 7 | React + MUI chat UI (+ root `npm run dev` for API + UI) | ✅ Done — user-tested in browser |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | README + demo script done; pushed to GitHub; demo recording + submission pending |
 
-**Next action:** record the demo with docs/DEMO_SCRIPT.md (`npm run db:reset` first) → submit video + repo link + README.
+**Next action:** Enhancement 2 (manager role): team leave view + approve/reject with confirmation. Then eval set → login rate limit → (streaming). Regenerate README/PDF at the end.
 
 **Repository:** https://github.com/Muthukumar-ramasamy/HR-Chat-Agent (public, branch `main`).
 
@@ -798,6 +798,26 @@ Then `npm run db:reset` (server) to remove test requests.
   - `client/vite.config.ts` proxy target configurable via `API_URL` (default :3001); vite.config.ts excluded from the
     browser tsconfig.
 - Pending: submission (video + repo link + README).
+
+---
+
+## Enhancement 1 — Cancel a leave request from chat
+
+- `repo.getLeaveRequest(employeeId, id)` (scoped: another user's id is "not found") and
+  `repo.cancelLeaveRequest(employeeId, id)` (UPDATE status = cancelled only if pending/approved; second write in the app).
+- `validateCancellation(employee, id)` (hr/leaveRequest.ts): must exist for this user, be pending/approved, and start
+  after today (Leave Policy §9) → `CancellationSummary` {request_id, leave_type, leave_name, dates, working_days, status}.
+- Tool `cancel_leave({request_id})`: validate → `interrupt({type: "confirm_cancel", ...summary})` → on approval cancel and
+  return `available_now` (pending/approved days are freed automatically because balances are derived from requests).
+- Confirmation is now a union `Confirmation = LeaveConfirmation | CancelConfirmation` (server tools, runner, CLI, client).
+- Prompt: "To cancel, find the request id with get_leave_history, then call cancel_leave (same confirmation)."
+- UI: the card shows "Cancel this leave request?" (warning colour) with **Cancel request / Keep it**; CLI asks
+  "Cancel this request? (y/n)".
+- User-tested (CLI): "Cancel my leave on Oct 16" → get_leave_history → cancel_leave → confirm y → cancelled, CL
+  available 11; 3 model calls, 7278 in / 199 out.
+- Tests: 38/38 (+1 validation: own/future/pending only, other user's #5 and unknown #999 not found, past request
+  already started; +1 graph: pause → nothing changed → approve → status cancelled → CL available +1 → second cancel
+  returns a problem without confirmation).
 
 ---
 

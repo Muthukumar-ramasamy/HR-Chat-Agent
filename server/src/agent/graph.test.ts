@@ -12,6 +12,7 @@ process.env.APP_TODAY = "2026-10-05"; // must be set before config loads
 after(await useTempDb("graph"));
 
 const { getDb } = await import("../db");
+const repo = await import("../hr/repo");
 const { buildAgentGraph, MAX_HISTORY_MESSAGES } = await import("./graph");
 const { createTurnRunner, ConfirmationStateError } = await import("./run");
 
@@ -124,4 +125,28 @@ test("memory keeps earlier turns, capped to the most recent ones", async () => {
   assert.ok(HumanMessage.isInstance(kept[0]));
   assert.equal(kept[0].text, "question 3");
   assert.equal(kept.at(-1)?.text, "answer 6");
+});
+
+test("cancel_leave pauses for confirmation, then cancels and frees the balance", async () => {
+  const status = () => (getDb().prepare(`SELECT status FROM leave_requests WHERE id = 4`).get() as { status: string }).status;
+  const clAvailable = () => repo.getLeaveBalances(asha, 2026, "CL")[0].available;
+  assert.equal(status(), "pending");
+  const before = clAvailable();
+
+  model.script.push(callTool("cancel_leave", { request_id: 4 }));
+  const paused = await runner.run({ employeeId: asha, threadId: "t-cancel-leave", message: "Cancel my Oct 16 leave" });
+  assert.equal(paused.confirmation?.type, "confirm_cancel");
+  assert.equal(status(), "pending", "nothing changed before confirmation");
+
+  model.script.push(say("Cancelled request #4."));
+  const done = await runner.run({ employeeId: asha, threadId: "t-cancel-leave", resume: { approved: true } });
+  assert.equal(done.reply, "Cancelled request #4.");
+  assert.equal(status(), "cancelled");
+  assert.equal(clAvailable(), before + 1, "pending day returned to the balance");
+
+  // Cancelling again: rule check returns a problem, no confirmation.
+  model.script.push(callTool("cancel_leave", { request_id: 4 }));
+  model.script.push(say("Already cancelled."));
+  const again = await runner.run({ employeeId: asha, threadId: "t-cancel-again", message: "Cancel #4" });
+  assert.equal(again.confirmation, undefined);
 });

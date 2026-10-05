@@ -72,3 +72,39 @@ export function validateLeaveRequest(
     },
   };
 }
+
+export interface CancellationSummary {
+  request_id: number;
+  leave_type: repo.LeaveCode;
+  leave_name: string;
+  start_date: string;
+  end_date: string;
+  working_days: number;
+  status: string; // current status: pending or approved
+}
+
+export type CancelCheck = { ok: true; summary: CancellationSummary } | { ok: false; problems: string[] };
+
+// Leave Policy §9: requests can be cancelled before the leave starts.
+export function validateCancellation(employee: repo.Employee, requestId: number): CancelCheck {
+  const r = repo.getLeaveRequest(employee.id, requestId);
+  if (!r) return { ok: false, problems: [`No leave request #${requestId} found for you.`] };
+  if (r.status !== "pending" && r.status !== "approved") {
+    return { ok: false, problems: [`Request #${requestId} is already ${r.status}.`] };
+  }
+  if (r.start_date <= today()) {
+    return { ok: false, problems: [`Request #${requestId} has already started (${r.start_date}); contact HR (Leave Policy §9).`] };
+  }
+  return {
+    ok: true,
+    summary: {
+      request_id: r.id,
+      leave_type: r.leave_type,
+      leave_name: repo.getLeaveType(r.leave_type)!.name,
+      start_date: r.start_date,
+      end_date: r.end_date,
+      working_days: r.days,
+      status: r.status,
+    },
+  };
+}

@@ -4,7 +4,7 @@
 // message (or the user's answer to a pending confirmation).
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { Command } from "@langchain/langgraph";
-import type { LeaveConfirmation } from "../tools";
+import type { Confirmation } from "../tools";
 import type { AgentGraph } from "./graph";
 
 export type TurnEvent =
@@ -13,7 +13,7 @@ export type TurnEvent =
 
 export interface TurnResult {
   reply: string; // empty while waiting for confirmation
-  confirmation?: LeaveConfirmation; // set when apply_leave paused the graph
+  confirmation?: Confirmation; // set when apply_leave or cancel_leave paused the graph
   toolCalls: { name: string; args: Record<string, unknown> }[];
   usage: { modelCalls: number; inputTokens: number; outputTokens: number };
 }
@@ -45,12 +45,12 @@ export function createTurnRunner(graph: AgentGraph): TurnRunner {
   async function run(input: TurnInput, onEvent?: (e: TurnEvent) => void): Promise<TurnResult> {
     const { employeeId, threadId } = input;
     const pending = await hasPendingConfirmation(employeeId, threadId);
-    if ("resume" in input && !pending) throw new ConfirmationStateError("There is no leave request waiting for confirmation.");
-    if ("message" in input && pending) throw new ConfirmationStateError("Please confirm or cancel the pending leave request first.");
+    if ("resume" in input && !pending) throw new ConfirmationStateError("There is nothing waiting for confirmation.");
+    if ("message" in input && pending) throw new ConfirmationStateError("Please answer the pending confirmation first.");
 
     const toolCalls: TurnResult["toolCalls"] = [];
     const usage = { modelCalls: 0, inputTokens: 0, outputTokens: 0 };
-    let confirmation: LeaveConfirmation | undefined;
+    let confirmation: Confirmation | undefined;
     let finalMessages: BaseMessage[] = [];
 
     const graphInput =
@@ -73,7 +73,7 @@ export function createTurnRunner(graph: AgentGraph): TurnRunner {
       }
       for (const [node, update] of Object.entries(chunk)) {
         if (node === "__interrupt__") {
-          confirmation = (update as { value: LeaveConfirmation }[])[0]?.value;
+          confirmation = (update as { value: Confirmation }[])[0]?.value;
           continue;
         }
         const messages = ((update as { messages?: BaseMessage[] } | undefined)?.messages ?? []) as BaseMessage[];

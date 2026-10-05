@@ -21,10 +21,23 @@ export interface LeaveConfirmation {
   reason: string | null;
 }
 
+export interface CancelConfirmation {
+  type: "confirm_cancel";
+  request_id: number;
+  leave_type: string;
+  leave_name: string;
+  start_date: string;
+  end_date: string;
+  working_days: number;
+  status: string;
+}
+
+export type Confirmation = LeaveConfirmation | CancelConfirmation;
+
 export interface ChatResponse {
   threadId: string;
   reply: string;
-  confirmation?: LeaveConfirmation;
+  confirmation?: Confirmation;
   toolCalls: { name: string; args: Record<string, unknown> }[];
   usage: { modelCalls: number; inputTokens: number; outputTokens: number };
 }

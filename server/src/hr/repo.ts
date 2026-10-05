@@ -1,4 +1,5 @@
-// Queries over the HR database. The only write is createLeaveRequest (after user confirmation).
+// Queries over the HR database. The only writes are createLeaveRequest and cancelLeaveRequest,
+// both called after the user confirms.
 import { getDb } from "../db";
 import type { Holiday } from "./leaveMath";
 
@@ -139,4 +140,25 @@ export function createLeaveRequest(r: {
     )
     .run(r.employeeId, r.leaveType, r.startDate, r.endDate, r.days, r.reason, r.appliedOn);
   return Number(result.lastInsertRowid);
+}
+
+// Scoped to the employee: another user's request id simply isn't found.
+export function getLeaveRequest(employeeId: string, requestId: number): LeaveRequest | undefined {
+  return getDb()
+    .prepare(
+      `SELECT id, leave_type, start_date, end_date, days, reason, status, applied_on
+         FROM leave_requests WHERE id = ? AND employee_id = ?`,
+    )
+    .get(requestId, employeeId) as LeaveRequest | undefined;
+}
+
+// Called only after the user confirms (cancel_leave). Returns false if nothing changed.
+export function cancelLeaveRequest(employeeId: string, requestId: number): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE leave_requests SET status = 'cancelled'
+        WHERE id = ? AND employee_id = ? AND status IN ('pending', 'approved')`,
+    )
+    .run(requestId, employeeId);
+  return result.changes === 1;
 }

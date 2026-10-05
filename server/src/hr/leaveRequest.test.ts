@@ -47,3 +47,26 @@ test("tenure, balance, past dates and overlaps are rejected", () => {
 test("sick leave can be backdated", () => {
   assert.ok(validateLeaveRequest(asha, "SL", "2026-10-01", "2026-10-01").ok);
 });
+
+const { validateCancellation } = await import("./leaveRequest");
+
+test("cancellation: only the user's own future pending/approved requests", () => {
+  const ok = validateCancellation(asha, 4); // CL 2026-10-16, pending
+  assert.ok(ok.ok);
+  assert.deepEqual(ok.summary, {
+    request_id: 4,
+    leave_type: "CL",
+    leave_name: "Casual Leave",
+    start_date: "2026-10-16",
+    end_date: "2026-10-16",
+    working_days: 1,
+    status: "pending",
+  });
+  const fail = (id: number) => {
+    const c = validateCancellation(asha, id);
+    return c.ok ? "" : c.problems.join();
+  };
+  assert.match(fail(1), /already started/); // EL in March 2026
+  assert.match(fail(5), /No leave request #5 found/); // belongs to Dev
+  assert.match(fail(999), /No leave request #999 found/);
+});
