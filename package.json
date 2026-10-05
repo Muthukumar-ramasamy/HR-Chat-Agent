@@ -10,6 +10,7 @@
     "predev:watch": "node scripts/free-ports.cjs",
     "dev:watch": "concurrently --names api,web --prefix-colors blue,green --kill-others-on-fail \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
     "test": "npm --prefix server test",
+    "eval": "npm --prefix server run eval --",
     "typecheck": "npm --prefix server run typecheck && npm --prefix client run typecheck",
     "db:reset": "npm --prefix server run db:reset"
   },

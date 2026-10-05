@@ -149,6 +149,11 @@ export const calculateLeave = tool(
           result.loss_of_pay_days = lossOfPayDays(days.workingDays, available);
           result.balance_after_leave = Math.max(available - days.workingDays, 0);
           if (end_date.slice(0, 4) !== start_date.slice(0, 4)) result.note = `Checked against ${year} balance.`;
+        } else {
+          // No type chosen yet: include every type's balance so no extra get_leave_balance call is needed.
+          result.available_by_type = Object.fromEntries(
+            repo.getLeaveBalances(e.id, year).map((b) => [b.leave_type, b.available]),
+          );
         }
         return json(result);
       }
@@ -180,7 +185,8 @@ export const calculateLeave = tool(
     name: "calculate_leave",
     description:
       "Leave math for the user. leave_days (start_date, end_date inclusive): working days excluding weekends and " +
-      "the user's holidays, overlapping requests; with leave_type also available, loss_of_pay_days, balance_after_leave. " +
+      "the user's holidays (no get_holidays needed), overlapping requests; with leave_type also available, " +
+      "loss_of_pay_days, balance_after_leave; without it, available_by_type. " +
       "pro_rata_entitlement / encashment: need leave_type.",
     schema: z.object({
       calculation: z.enum(["leave_days", "pro_rata_entitlement", "encashment"]),

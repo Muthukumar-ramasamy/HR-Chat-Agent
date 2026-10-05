@@ -19,7 +19,7 @@ work without missing context. Update it at the end of every stage.
 | 7 | React + MUI chat UI (+ root `npm run dev` for API + UI) | ✅ Done — user-tested in browser |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | README + demo script done; pushed to GitHub; demo recording + submission pending |
 
-**Next action:** Enhancement 3 (evaluation set) → login rate limit → (streaming). Regenerate README/PDF at the end.
+**Next action:** commit Enhancement 3 → Enhancement 4 (login rate limit) → (streaming) → refresh README + PDF.
 
 **Repository:** https://github.com/Muthukumar-ramasamy/HR-Chat-Agent (public, branch `main`).
 
@@ -853,6 +853,28 @@ Then `npm run db:reset` (server) to remove test requests.
 - **Tests 42/42** (+4 graph): manager approves Dev's new request after confirmation (name in card, pending until confirmed);
   rejects Priya's; own request #7 and already-approved #1 → no confirmation, unchanged; employee session calling
   decide_leave_request → tool refuses, unchanged; team queries contain only direct reports, own request not a team request.
+
+---
+
+## Enhancement 3 — Evaluation set (real model)
+
+- **Concept**: unit tests check our code with a scripted fake model; an **eval** checks the real agent + real model
+  (tool choice and answer content). It catches prompt regressions such as the follow-up bug found while recording.
+- [server/src/eval/cases.ts](../server/src/eval/cases.ts): 13 cases run in order (later ones depend on earlier writes):
+  policy citation (§4, 30) · not covered · balance (exact tool, no search_policy) · Dec 22–Jan 2 (7 days, no
+  get_holidays, ≤ 3 tool calls) · sick-leave follow-up in the same thread (fresh calculate_leave, ">2 days" rule) ·
+  apply → confirm_leave → pending, no "you'll be notified" · CL 5 days rejected without confirmation · privacy refusal
+  with no tools · employee cannot use decide_leave_request · Priya eligible from 2027-01-01 · Ravi pending approvals
+  (Asha) · Ravi approves #4 (confirm_decision) · Asha cancels Oct 16 (confirm_cancel).
+- Checks: tools (all), toolsAny, noTools, notTools, maxToolCalls, confirmation type / none, reply must / must-not regexes.
+- [server/src/eval/run.ts](../server/src/eval/run.ts): fresh temp DB (`useTempDb`), `APP_TODAY=2026-10-05`, LangSmith project
+  `hr-agent-eval`, confirmations answered from the case, PASS/FAIL table + tokens + estimated cost (Haiku list price),
+  exit code 1 on failure. `npm run eval` (root or server); `npm run eval -- --only id1,id2`. Not part of `npm test`.
+- First full run: **13/13 passed**, 61,983 in / 1,935 out tokens, ~$0.07.
+- Finding → fix: "Dec 22 to Jan 2" called calculate_leave without leave_type plus get_leave_balance and get_holidays ×2.
+  calculate_leave now returns `available_by_type` when no leave_type is given and its description says no get_holidays
+  is needed. Rerun: get_holidays gone; get_leave_balance still requested **in the same parallel round** (decided before
+  any result; costs a small tool result, not a model call) → case allows ≤ 3 tool calls, forbids get_holidays.
 
 ---
 
