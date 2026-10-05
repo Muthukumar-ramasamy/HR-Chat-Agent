@@ -783,7 +783,21 @@ Then `npm run db:reset` (server) to remove test requests.
 - Pushed to https://github.com/Muthukumar-ramasamy/HR-Chat-Agent (public). The GitHub repo had an auto-generated
   README commit; merged it with `--allow-unrelated-histories` keeping the project README (no force push). Local
   branch renamed `master` → `main`. Final scan before push: no secrets, no .env/.db/node_modules in any commit.
-- Pending: demo recording, submission.
+- **Demo video** recorded automatically with Playwright driving Microsoft Edge (headless) against a private
+  instance (API :3101, UI :5174), with on-screen step captions and title/closing cards: ~2:23, WebM, saved outside
+  the repo. Frames were reviewed after each take; the takes exposed real issues, fixed in code:
+  - **Follow-ups answered from memory** (history trimming removes tool results, so "what about sick leave instead?"
+    reused old numbers, did its own subtraction and misquoted the SL certificate rule as "over 3 days"). Fix: prompt
+    rule "every question, including follow-ups, needs fresh tool calls ... quote policy limits exactly", with the
+    sick-leave follow-up as an explicit example. Verified: follow-up now calls calculate_leave(SL) + search_policy.
+  - **"1 pending CL request and 7 pending EL requests"**: model read balance fields as request counts → renamed to
+    `used_days` / `pending_days`.
+  - **"You'll be notified once your manager responds"** (no notifications exist) persisted despite the prompt rule →
+    apply_leave result now carries `note: "No notifications are sent..."`; tool data steers better than prompt text.
+  - **Request IDs continued after db:reset** (#18) → reset also clears `sqlite_sequence`.
+  - `client/vite.config.ts` proxy target configurable via `API_URL` (default :3001); vite.config.ts excluded from the
+    browser tsconfig.
+- Pending: submission (video + repo link + README).
 
 ---
 

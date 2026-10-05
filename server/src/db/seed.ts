@@ -84,6 +84,8 @@ export function seed({ reset = false, quiet = false } = {}) {
       for (const table of ["leave_requests", "leave_allocations", "holidays", "leave_types", "employees"]) {
         db.exec(`DELETE FROM ${table}`);
       }
+      // Restart AUTOINCREMENT ids so new requests are numbered from 9 again.
+      db.exec(`DELETE FROM sqlite_sequence WHERE name IN ('leave_requests', 'holidays')`);
     }
 
     const insertEmployee = db.prepare(

@@ -76,8 +76,8 @@ export const getLeaveBalance = tool(
       type: leave_type,
       allocated,
       carried_forward,
-      used,
-      pending,
+      used_days: used, // "_days" so the model doesn't read these as request counts
+      pending_days: pending,
       available,
     }));
     const total_available = balances.reduce((sum, b) => sum + b.available, 0);
@@ -268,7 +268,13 @@ export const applyLeave = tool(
       reason: reason ?? null,
       appliedOn: today(),
     });
-    return json({ submitted: true, request_id: id, status: "pending manager approval", balance_after: check.summary.balance_after });
+    return json({
+      submitted: true,
+      request_id: id,
+      status: "pending manager approval",
+      balance_after: check.summary.balance_after,
+      note: "No notifications are sent; the user can ask for their leave history to see the status.",
+    });
   },
   {
     name: "apply_leave",
