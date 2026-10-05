@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import jwt from "jsonwebtoken";
 import { ConfirmationStateError, type TurnInput, type TurnRunner } from "../agent/run";
+import { createLoginLimiter } from "../auth/loginLimiter";
 import { createApp } from "./app";
 
 const SECRET = "test-secret-0123456789-abcdefghijklmnop";
@@ -119,4 +120,22 @@ test("confirm resumes with the decision; 409 when nothing is pending", async () 
   assert.equal((await call("/api/chat/confirm", { threadId: NOT_PENDING, approved: true }, token)).status, 409);
   assert.equal((await call("/api/chat/confirm", { threadId, approved: "yes" }, token)).status, 400);
   assert.equal((await call("/api/chat/confirm", { threadId, approved: true })).status, 401);
+});
+
+test("too many failed logins return 429 with Retry-After; other accounts unaffected", async () => {
+  const limited = createApp(fakeRunner, createLoginLimiter({ maxFailures: 2 })).listen(0);
+  await new Promise((resolve) => limited.once("listening", resolve));
+  const url = `http://localhost:${(limited.address() as AddressInfo).port}/api/login`;
+  const attempt = (email: string, password: string) =>
+    fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
+  try {
+    assert.equal((await attempt("dev.patel@example.com", "wrong")).status, 401);
+    assert.equal((await attempt("dev.patel@example.com", "wrong")).status, 401);
+    const blocked = await attempt("dev.patel@example.com", "Password@123"); // even the right password waits
+    assert.equal(blocked.status, 429);
+    assert.ok(Number(blocked.headers.get("retry-after")) > 0);
+    assert.equal((await attempt("priya.nair@example.com", "Password@123")).status, 200);
+  } finally {
+    limited.close();
+  }
 });

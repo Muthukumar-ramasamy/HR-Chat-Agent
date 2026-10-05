@@ -11,6 +11,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { z } from "zod";
 import { ConfirmationStateError, type TurnInput, type TurnResult, type TurnRunner } from "../agent/run";
 import { login, signToken, verifyToken } from "../auth/auth";
+import { createLoginLimiter, type LoginLimiter } from "../auth/loginLimiter";
 import { config } from "../config";
 import { getEmployee, type Employee } from "../hr/repo";
 
@@ -46,7 +47,8 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-export function createApp(runner: TurnRunner) {
+// The login limiter is injectable so tests can use a small limit and a fake clock.
+export function createApp(runner: TurnRunner, loginLimiter: LoginLimiter = createLoginLimiter()) {
   // Runs a turn and sends the response. 409 = confirmation state mismatch (e.g. new message
   // while a leave request is waiting for confirmation).
   async function respond(res: Response, input: TurnInput) {
@@ -82,12 +84,21 @@ export function createApp(runner: TurnRunner) {
       res.status(400).json({ error: "Email and password are required." });
       return;
     }
+    const key = `${body.data.email.trim().toLowerCase()}|${req.ip}`;
+    const wait = loginLimiter.retryAfter(key);
+    if (wait > 0) {
+      res.set("Retry-After", String(wait));
+      res.status(429).json({ error: `Too many failed attempts. Try again in ${Math.ceil(wait / 60)} minute(s).` });
+      return;
+    }
     const employee = await login(body.data.email, body.data.password);
     if (!employee) {
+      loginLimiter.recordFailure(key);
       // Same message for unknown email and wrong password.
       res.status(401).json({ error: "Invalid email or password." });
       return;
     }
+    loginLimiter.reset(key);
     res.json({ token: signToken(employee.id), employee: publicEmployee(employee) });
   });
 

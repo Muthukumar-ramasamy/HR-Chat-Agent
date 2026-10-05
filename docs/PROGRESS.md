@@ -19,7 +19,7 @@ work without missing context. Update it at the end of every stage.
 | 7 | React + MUI chat UI (+ root `npm run dev` for API + UI) | ✅ Done — user-tested in browser |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | README + demo script done; pushed to GitHub; demo recording + submission pending |
 
-**Next action:** commit Enhancement 3 → Enhancement 4 (login rate limit) → (streaming) → refresh README + PDF.
+**Next action:** decide on streaming (optional) → refresh README + PDF for enhancements → push → re-record demo if desired.
 
 **Repository:** https://github.com/Muthukumar-ramasamy/HR-Chat-Agent (public, branch `main`).
 
@@ -875,6 +875,18 @@ Then `npm run db:reset` (server) to remove test requests.
   calculate_leave now returns `available_by_type` when no leave_type is given and its description says no get_holidays
   is needed. Rerun: get_holidays gone; get_leave_balance still requested **in the same parallel round** (decided before
   any result; costs a small tool result, not a model call) → case allows ≤ 3 tool calls, forbids get_holidays.
+
+---
+
+## Enhancement 4 — Login rate limiting
+
+- [auth/loginLimiter.ts](../server/src/auth/loginLimiter.ts): `createLoginLimiter({maxFailures 5, windowMs 15 min, now})`
+  → retryAfter / recordFailure / reset. In memory, keyed by `email|ip`; only failed attempts count; a success resets.
+- `POST /api/login`: if blocked → **429** + `Retry-After` + "Too many failed attempts. Try again in N minute(s)." (checked
+  before bcrypt, so even the right password waits). `createApp(runner, loginLimiter?)` (injectable for tests).
+- Tests 45/45 (+2 unit with fake clock: blocks after max, expires with window, keys independent, success resets;
+  +1 API: 2 failures → 429 with Retry-After for that account, another account still logs in).
+- Limitation: per-process memory (resets on restart, not shared across instances) → Redis or similar at scale.
 
 ---
 
