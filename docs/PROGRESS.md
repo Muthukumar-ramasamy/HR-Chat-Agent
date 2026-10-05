@@ -19,7 +19,7 @@ work without missing context. Update it at the end of every stage.
 | 7 | React + MUI chat UI (+ root `npm run dev` for API + UI) | ✅ Done — user-tested in browser |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | README + demo script done; pushed to GitHub; demo recording + submission pending |
 
-**Next action:** decide on streaming (optional) → refresh README + PDF for enhancements → push → re-record demo if desired.
+**Next action:** submit (video `HR-Assist-demo.webm` on Desktop, repo link, README + docs/HR-Assist-Architecture.pdf). Optional: streaming replies (skipped: risk vs. deadline).
 
 **Repository:** https://github.com/Muthukumar-ramasamy/HR-Chat-Agent (public, branch `main`).
 
@@ -887,6 +887,19 @@ Then `npm run db:reset` (server) to remove test requests.
 - Tests 45/45 (+2 unit with fake clock: blocks after max, expires with window, keys independent, success resets;
   +1 API: 2 failures → 429 with Retry-After for that account, another account still logs in).
 - Limitation: per-process memory (resets on restart, not shared across instances) → Redis or similar at scale.
+
+---
+
+## Docs and video refresh (after enhancements)
+
+- README: capabilities (cancel + manager rows), demo accounts, scripts (eval, predev cleanup), tools table (9 + 3 manager,
+  role-based binding), security (rate limiting, manager scope), token table (employee ~1.5k / manager ~1.85k per call),
+  testing (45 tests + eval section), structure, future list (removed what was built).
+- Demo video re-recorded (3:39): added 5c cancel (orange card) and 8 manager (pending approvals → approve #9, green card);
+  title/closing cards mention manager tools, 45 tests and eval 13/13. Recorder now waits for any confirmation card.
+- PDF regenerated (12 pages) with four fresh screenshots: multi-tool + citation, apply card, CL rule + cancel card,
+  manager approve card; architecture figure shows 9 + 3 manager tools; committed to docs/.
+- DEMO_SCRIPT.md updated with 5c and 8.
 
 ---
 
