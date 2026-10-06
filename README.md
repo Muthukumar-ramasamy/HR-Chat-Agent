@@ -51,6 +51,7 @@ Edit `server/.env`:
 | `LLM_PROVIDER` / `LLM_MODEL` | no | Defaults to `anthropic` / `claude-haiku-4-5`. `google` + `GOOGLE_API_KEY` switches to Gemini |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | no | Turns on LangSmith traces of every model and tool call |
 | `APP_TODAY` | no | Pin "today" (YYYY-MM-DD) for reproducible demos |
+| `POLICY_DIR` | no | Folder of policy documents (.md/.txt/.pdf/.docx); default `server/policies` (see below) |
 
 ```bash
 npm run dev          # API on :3001 and UI on :5173 together
