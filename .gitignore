@@ -13,3 +13,6 @@ dist/
 
 .DS_Store
 *.log
+
+# Real or confidential policy documents (use POLICY_DIR=./policies-private)
+server/policies-private/

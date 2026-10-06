@@ -65,6 +65,22 @@ Open http://localhost:5173 and pick a demo account (password for all: `Password@
 | `priya.nair@example.com` | Joined Jul 2026: pro-rated quota, not yet eligible for earned leave |
 | `ravi.kumar@example.com` | Manager of the other three: team leave view and approvals |
 
+### Using your own policy documents
+
+Policy search reads every `.md`, `.txt`, `.pdf` and `.docx` file in `server/policies/` (fictional samples by
+default) at startup. To use other documents, for example ones provided by your HR team, put them in
+`server/policies-private/` (gitignored, so they never reach the repository) and set `POLICY_DIR=./policies-private`
+in `server/.env`. Documents are split into sections by their headings: Word heading styles, Markdown `##` headings,
+or numbered/capitalised heading lines in PDF and text files; long sections are split into parts. Answers cite
+`Document §Section`. Check how a folder was split with:
+
+```bash
+cd server && npm run policies -- --search "carry forward"
+```
+
+The leave quotas and rules enforced in code (`leave_types` seed data and `server/src/hr/leaveRequest.ts`) mirror the
+sample Leave Policy; update them if your policy's numbers differ.
+
 Other scripts (from the project root): `npm test` (unit/integration tests, no LLM calls), `npm run eval`
 (evaluation against the real model), `npm run typecheck`, `npm run db:reset` (restore the demo data).
 In `server/`: `npm run chat` (terminal chat; `-- --as E1000` to switch user), `npm run graph` (print the agent
@@ -198,7 +214,7 @@ earned leave, overlapping requests, no past dates, casual leave ≤ 3 consecutiv
 earned leave) *before* asking. The LangGraph interrupt pauses the graph; on resume the tool re-runs from the top, so
 everything before the interrupt is side-effect free and the database write comes last.
 
-**Grounded policy answers.** Policies are split into short `##` sections and indexed with BM25 at startup. Results
+**Grounded policy answers.** Policy files (Markdown, text, PDF, Word) are split into short sections by heading and indexed with BM25 at startup. Results
 must match at least one distinctive word, so a question about an uncovered topic returns nothing and the agent says
 the policy doesn't cover it. Answers cite the source section.
 
@@ -246,7 +262,7 @@ custom retry handler that honours the server's `retryDelay`; it is included and 
 ## Testing
 
 ```bash
-npm test     # 45 tests, no LLM calls, no API cost
+npm test     # 51 tests, no LLM calls, no API cost
 npm run eval # 13 cases against the real model (~$0.07 per run)
 ```
 
@@ -254,7 +270,7 @@ npm run eval # 13 cases against the real model (~$0.07 per run)
 |---|---|
 | Leave math | Working days across Christmas/New Year, tenure, pro-rata, encashment, loss of pay, invalid dates |
 | Leave validation | Every apply_leave and cancel_leave rule, on a fresh temporary database |
-| Policy search | Section parsing, stemming, correct top section for 6 questions, "not covered" cases |
+| Policy search | Section parsing (Markdown, text, PDF and Word fixtures), heading detection, long-section splitting, unreadable files reported, stemming, correct top section for 6 questions, "not covered" cases |
 | Agent graph | The real graph with a **scripted fake model** and a temp database: pause → confirm → write, cancel, rule violations, per-employee threads, history cap, manager approve/reject, manager can't decide own request, employee can't use manager tools |
 | API + auth | Login, forged/expired/`alg:none`/unknown-user tokens, body `employeeId` ignored, thread IDs, confirm endpoint (409 when nothing is pending), login rate limiting |
 | Retry handler | Gemini per-minute vs daily quota errors |
@@ -277,12 +293,12 @@ prompts, tool inputs/outputs and token counts.
 ├── package.json            # root scripts: setup, dev (API + UI), test, eval, typecheck, db:reset
 ├── scripts/free-ports.cjs  # runs before dev: stops this project's leftover dev servers
 ├── server/
-│   ├── policies/           # synthetic policy documents (Leave, Holiday, Attendance/WFH)
+│   ├── policies/           # sample policy documents (Leave, Holiday, Attendance/WFH); any .md/.txt/.pdf/.docx
 │   └── src/
 │       ├── agent/          # graph.ts (StateGraph), state.ts, prompt.ts, run.ts (turn runner)
 │       ├── tools/          # index.ts (employee tools), manager.ts (team tools), common.ts
 │       ├── hr/             # leaveMath (pure), leaveRequest (validation), repo (SQL), dates
-│       ├── rag/            # policyIndex.ts (BM25)
+│       ├── rag/            # policyIndex.ts (BM25), documents.ts (md/txt/pdf/docx loading)
 │       ├── eval/           # cases.ts + run.ts: evaluation against the real model
 │       ├── auth/           # login, JWT sign/verify, login rate limiter
 │       ├── server/         # Express app + entry point

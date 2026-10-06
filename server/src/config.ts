@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
 
 loadEnv({ quiet: true });
@@ -31,6 +33,10 @@ function required(name: string): string {
 // don't need the LLM (e.g. db:seed) don't require an API key.
 export const config = {
   dbPath: process.env.DB_PATH ?? "./data/hr.db",
+
+  // Folder of policy documents (.md, .txt, .pdf, .docx). Point it at a gitignored folder for
+  // real or confidential documents so they never reach the public repository.
+  policyDir: resolve(process.env.POLICY_DIR || fileURLToPath(new URL("../policies/", import.meta.url))),
 
   // Optional fixed "today" (YYYY-MM-DD) for reproducible demos; defaults to the real date.
   appToday: process.env.APP_TODAY || undefined,

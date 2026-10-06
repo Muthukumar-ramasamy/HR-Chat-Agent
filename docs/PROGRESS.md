@@ -19,7 +19,7 @@ work without missing context. Update it at the end of every stage.
 | 7 | React + MUI chat UI (+ root `npm run dev` for API + UI) | ✅ Done — user-tested in browser |
 | 8 | LangSmith tracing, README + Mermaid diagram, demo, push, submit | README + demo script done; pushed to GitHub; demo recording + submission pending |
 
-**Next action:** submit (video `HR-Assist-demo.webm` on Desktop, repo link, README + docs/HR-Assist-Architecture.pdf). Optional: streaming replies (skipped: risk vs. deadline).
+**Next action:** submit. Optional: Qdrant/embeddings vector search; policy upload API for HR admins.
 
 **Repository:** https://github.com/Muthukumar-ramasamy/HR-Chat-Agent (public, branch `main`).
 
@@ -900,6 +900,29 @@ Then `npm run db:reset` (server) to remove test requests.
 - PDF regenerated (12 pages) with four fresh screenshots: multi-tool + citation, apply card, CL rule + cancel card,
   manager approve card; architecture figure shows 9 + 3 manager tools; committed to docs/.
 - DEMO_SCRIPT.md updated with 5c and 8.
+
+---
+
+## Enhancement 5 — Policy ingestion from PDF, Word and text
+
+- Motivation: the brief says "answer from the existing HR policy documents provided/shared"; provided documents are
+  likely PDF/Word, not our Markdown samples.
+- [rag/documents.ts](../server/src/rag/documents.ts): parseMarkdown (## and ###), parsePlainText (title = first short line;
+  isHeading: numbered "4.", "4.2", "Section 3:", or ALL CAPS short lines; text before the first heading → "Overview"),
+  parseWordHtml (mammoth HTML: first h1 = title, h2–h6 = sections, p/li = text, entities decoded), splitLongSections
+  (> 1000 chars → "X (part n)" at sentence boundaries; token saving), loadTextDocuments (sync, md/txt),
+  loadAllDocuments (async; PDF via unpdf, Word via mammoth; unreadable file → reported, not fatal).
+- policyIndex: `getPolicyIndex()` stays sync (md/txt, used by tests); new `loadPolicyIndex()` loads all formats and is
+  awaited at startup by the server (logs "Policy index: N document(s), M section(s) from <dir>" and unreadable files),
+  the CLI and the eval. `parsePolicy` kept as an alias.
+- `config.policyDir` from `POLICY_DIR` (default server/policies); `server/policies-private/` gitignored for real or
+  confidential documents. `npm run policies [-- --search "q"]` previews sections and search results.
+- Fixtures: fictional Travel Policy as PDF (printed with Edge) and DOCX (docx library, real heading styles) in
+  server/src/rag/fixtures/.
+- Tests 51/51 (+6): heading detection, plain-text sections + Overview, Word HTML parsing, long-section split,
+  PDF + Word fixtures load into 3 sections and are searchable, unreadable file reported / unsupported file ignored.
+- Smoke: default folder → 3 docs, 18 sections; POLICY_DIR with leave-policy.md + travel-policy.pdf → 2 docs, 13 sections.
+- npm audit: 3 moderate (sprintf-js via argparse) only in mammoth's CLI dependency, not used by the library path.
 
 ---
 

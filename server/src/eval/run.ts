@@ -12,6 +12,7 @@ const { buildAgentGraph } = await import("../agent/graph");
 const { createTurnRunner } = await import("../agent/run");
 const { config } = await import("../config");
 const { cases } = await import("./cases");
+await (await import("../rag/policyIndex")).loadPolicyIndex(); // include PDF/Word policy files
 
 // Claude Haiku 4.5 list prices, USD per million tokens (for the cost estimate only).
 const PRICE = { input: 1, output: 5 };

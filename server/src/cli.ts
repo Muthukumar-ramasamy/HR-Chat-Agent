@@ -13,6 +13,7 @@ import { buildAgentGraph } from "./agent/graph";
 import { createTurnRunner, type TurnEvent } from "./agent/run";
 import { config } from "./config";
 import { getEmployee } from "./hr/repo";
+import { loadPolicyIndex } from "./rag/policyIndex";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
@@ -22,6 +23,7 @@ function employeeIdFromArgs(): string {
 }
 
 async function main() {
+  await loadPolicyIndex(); // include PDF/Word policy files in search
   const graph = buildAgentGraph();
 
   if (process.argv.includes("--graph")) {

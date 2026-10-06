@@ -3,9 +3,8 @@
 // RAG = Retrieval-Augmented Generation: find the few relevant policy sections for a question
 // and give only those to the model, so it answers from the documents (with citations)
 // instead of from memory.
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { config } from "../config";
+import { loadAllDocuments, loadTextDocuments, parseMarkdown, type LoadedDocument } from "./documents";
 
 export interface PolicySection {
   doc: string; // "Leave Policy"
@@ -17,24 +16,8 @@ export interface PolicyHit extends PolicySection {
   score: number;
 }
 
-const POLICY_DIR = fileURLToPath(new URL("../../policies/", import.meta.url));
-
 // Split a policy markdown file into "## " sections. The "# " line is the document title.
-export function parsePolicy(markdown: string): PolicySection[] {
-  const sections: PolicySection[] = [];
-  let doc = "Policy";
-  let current: PolicySection | undefined;
-  for (const line of markdown.split(/\r?\n/)) {
-    if (line.startsWith("# ")) doc = line.slice(2).trim();
-    else if (line.startsWith("## ")) {
-      current = { doc, section: line.slice(3).trim(), text: "" };
-      sections.push(current);
-    } else if (current && line.trim()) {
-      current.text += (current.text ? " " : "") + line.trim();
-    }
-  }
-  return sections;
-}
+export const parsePolicy = (markdown: string): PolicySection[] => parseMarkdown(markdown);
 
 const STOPWORDS = new Set(
   ("a an and are as at be by can do does for from how i if in is it its me my of on or our policy " +
@@ -143,11 +126,17 @@ export class PolicyIndex {
 
 let index: PolicyIndex | undefined;
 
-// Built once from server/policies/*.md the first time it's needed.
+// Markdown/text only, built on first use. Entry points call loadPolicyIndex() at startup so
+// PDF and Word files are included too.
 export function getPolicyIndex(): PolicyIndex {
-  if (!index) {
-    const files = readdirSync(POLICY_DIR).filter((f) => f.endsWith(".md")).sort();
-    index = new PolicyIndex(files.flatMap((f) => parsePolicy(readFileSync(join(POLICY_DIR, f), "utf8"))));
-  }
+  if (!index) index = new PolicyIndex(loadTextDocuments(config.policyDir).flatMap((d) => d.sections));
   return index;
+}
+
+// Loads every supported file (.md, .txt, .pdf, .docx) from the policy folder and replaces the
+// index. Returns per-file results so callers can report unreadable files.
+export async function loadPolicyIndex(): Promise<LoadedDocument[]> {
+  const docs = await loadAllDocuments(config.policyDir);
+  index = new PolicyIndex(docs.flatMap((d) => d.sections));
+  return docs;
 }
