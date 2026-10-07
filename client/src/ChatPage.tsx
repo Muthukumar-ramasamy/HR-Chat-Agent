@@ -40,6 +40,12 @@ const SUGGESTIONS = {
   ],
 };
 
+// Extra prompts offered once a conversation is underway (follow-ups from the demo script).
+const FOLLOW_UPS = {
+  employee: ["What about sick leave instead?", "Cancel my pending leave request", "What's my manager's leave balance?"],
+  manager: ["Approve the pending request", "How many earned leave days can I carry forward?"],
+};
+
 // The user's line shown after they answer a confirmation card.
 const DECISION_TEXT: Record<Confirmation["type"], [string, string]> = {
   confirm_leave: ["Submit the request", "Don't submit"],
@@ -102,6 +108,9 @@ export default function ChatPage({ session, onLogout }: { session: Session; onLo
   }
 
   const { employee } = session;
+  // Suggestions the user hasn't asked yet in this conversation.
+  const asked = new Set(messages.filter((m) => m.role === "user").map((m) => m.text));
+  const nextSuggestions = [...SUGGESTIONS[employee.role], ...FOLLOW_UPS[employee.role]].filter((s) => !asked.has(s));
 
   return (
     <Box sx={{ height: "100dvh", display: "flex", flexDirection: "column" }}>
@@ -170,6 +179,17 @@ export default function ChatPage({ session, onLogout }: { session: Session; onLo
         }}
         sx={{ borderTop: 1, borderColor: "divider", p: 1.5 }}
       >
+        {messages.length > 0 && !pending && nextSuggestions.length > 0 && (
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ maxWidth: 760, mx: "auto", mb: 1, overflowX: "auto", pb: 0.5, "& > *": { flexShrink: 0 } }}
+          >
+            {nextSuggestions.map((s) => (
+              <Chip key={s} label={s} size="small" variant="outlined" disabled={busy} onClick={() => send(s)} />
+            ))}
+          </Stack>
+        )}
         <Stack direction="row" spacing={1} sx={{ maxWidth: 760, mx: "auto", alignItems: "flex-end" }}>
           <TextField
             fullWidth
